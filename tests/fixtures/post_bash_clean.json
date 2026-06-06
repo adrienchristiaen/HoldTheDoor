@@ -1,0 +1,10 @@
+{
+  "session_id": "test-session",
+  "tool_name": "Bash",
+  "tool_input": {"command": "ls"},
+  "tool_response": {
+    "stdout": "file1.txt\nfile2.txt\n",
+    "stderr": "",
+    "exit_code": 0
+  }
+}

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-wall"
+version = "0.1.0"
+description = "Privacy-first security layer for Claude Code via 3 deterministic hooks"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name = "Adrien Christiaen"}]
+license = {text = "MIT"}
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+claude-wall = "claude_wall.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["claude_wall*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
