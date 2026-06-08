@@ -40,7 +40,7 @@ class TestInstallFresh:
             for entry in hook_list:
                 for h in entry.get("hooks", []):
                     cmds.append(h["command"])
-        assert all(c.startswith("python -m claude_wall.hooks.") or c.startswith("python3 -m claude_wall.hooks.") for c in cmds)
+        assert all("claude_wall.hooks." in c for c in cmds)
 
 
 class TestInstallExisting:

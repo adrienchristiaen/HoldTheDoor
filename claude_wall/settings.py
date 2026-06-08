@@ -88,9 +88,9 @@ SUPPORTED_CLIS = list(CLI_ADAPTERS.keys())
 
 
 def _hook_command(module: str) -> str:
-    if sys.platform == "win32":
-        return f"python -m {module}"
-    return f"python3 -m {module}"
+    # Use the exact Python that's running claude-wall (pipx venv, conda env, etc.)
+    # so the hook process can always import claude_wall regardless of PATH.
+    return f"{sys.executable} -m {module}"
 
 
 OUR_COMMAND_PREFIXES = (
