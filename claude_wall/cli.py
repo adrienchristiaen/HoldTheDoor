@@ -14,12 +14,67 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import settings as S
 from .audit import AuditLog, generate_key
 from .session import SessionStore, session_db_path, session_root
 from .settings import SUPPORTED_CLIS, detect_cli
+
+# ── terminal colours (no external deps) ─────────────────────────────────────
+_USE_COLOR = sys.stdout.isatty()
+
+def _c(code: str, text: str) -> str:
+    return f"\033[{code}m{text}\033[0m" if _USE_COLOR else text
+
+RED    = lambda t: _c("31", t)
+YELLOW = lambda t: _c("33", t)
+GREEN  = lambda t: _c("32", t)
+BOLD   = lambda t: _c("1",  t)
+DIM    = lambda t: _c("2",  t)
+CYAN   = lambda t: _c("36", t)
+
+# ── event pretty-printing ────────────────────────────────────────────────────
+
+_EVENT_ICON = {
+    "block": RED("✗"),
+    "redact": YELLOW("⚙"),
+    "warn": YELLOW("⚠"),
+    "allow": GREEN("✓"),
+}
+_HOOK_SHORT = {
+    "pre_tool_use":       "pre-tool ",
+    "post_tool_use":      "post-tool",
+    "user_prompt_submit": "prompt   ",
+}
+
+
+def _fmt_ts(ts: float) -> str:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%H:%M:%S")
+
+
+def _fmt_event(e: dict) -> str:
+    icon    = _EVENT_ICON.get(e.get("event", ""), "·")
+    hook    = _HOOK_SHORT.get(e.get("hook", ""), e.get("hook", "")[:9])
+    event   = e.get("event", "?")
+    tool    = e.get("tool") or "—"
+    cats    = e.get("categories") or []
+    count   = e.get("count", 0)
+    reason  = e.get("reason", "")
+    ts      = _fmt_ts(e["ts"]) if "ts" in e else "??:??:??"
+
+    # detail line
+    if event == "block":
+        detail = f"{BOLD(tool)}  →  {reason or 'blocked'}"
+    elif event in ("redact", "warn") and cats:
+        tokens = ", ".join(f"[WALL:{c}:*]" for c in cats[:3])
+        detail = f"{BOLD(tool)}  →  {count}× {', '.join(cats)}  ({tokens})"
+    else:
+        detail = f"{BOLD(tool)}"
+
+    return f"  {DIM(ts)}  {icon} {event:<7}  {DIM(hook)}  {detail}"
 
 
 def _exit(msg: str, code: int = 1) -> int:
@@ -78,25 +133,52 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     clis = _resolve_clis(getattr(args, "cli", "auto"))
+    print()
+
+    # ── hooks per CLI ────────────────────────────────────────────────────────
     for cli in clis:
         st = S.status(cli=cli)
-        print(f"\n[{st['label']}]")
-        print(f"  settings file: {st['path']}")
-        print(f"  installed:     {st['installed']}")
-        print(f"  buckets:       {', '.join(st['hooks']) or '(none)'}")
-    print(f"\nsession dir:   {session_db_path().parent}")
-    print(f"session db:    {session_db_path()}")
+        badge = GREEN("✓ installed") if st["installed"] else RED("✗ not installed")
+        print(BOLD(f"[{st['label']}]") + f"  {badge}")
+        print(DIM(f"  {st['path']}"))
+        if st["hooks"]:
+            print(f"  hooks: {DIM(' · '.join(st['hooks']))}")
+        print()
+
+    # ── session ──────────────────────────────────────────────────────────────
+    db = session_db_path()
+    print(BOLD("SESSION") + f"  {DIM(str(db))}")
+    s = SessionStore.open()
+    try:
+        toks = s.all_tokens()
+        if toks:
+            print(f"  {YELLOW(str(len(toks)))} value{'s' if len(toks) != 1 else ''} redacted this session")
+            for cat, orig_preview, tok in toks[:5]:
+                masked = orig_preview[:4] + "••••" if len(orig_preview) > 4 else "••••"
+                print(DIM(f"    {tok}  ({cat})  →  claude-wall reveal '{tok}'"))
+            if len(toks) > 5:
+                print(DIM(f"    … and {len(toks)-5} more"))
+        else:
+            print(DIM("  no tokens this session"))
+    except Exception:
+        print(DIM("  (no session data)"))
+    finally:
+        s.close()
+
+    # ── recent events ────────────────────────────────────────────────────────
+    print()
+    print(BOLD("RECENT EVENTS"))
     try:
         log = _open_log()
         entries = log.read_last(5)
-        print(f"\nlast {len(entries)} audit event(s):")
-        for e in entries:
-            print(
-                f"  {e['hook']:<20} {e['event']:<8} tool={e.get('tool') or '-':<10}"
-                f" count={e['count']} categories={e['categories']}"
-            )
+        if entries:
+            for e in entries:
+                print(_fmt_event(e))
+        else:
+            print(DIM("  (none)"))
     except Exception as exc:
-        print(f"\n(no audit available: {exc})")
+        print(DIM(f"  (no audit: {exc})"))
+    print()
     return 0
 
 
@@ -125,16 +207,68 @@ def cmd_reveal(args: argparse.Namespace) -> int:
 
 def cmd_audit(args: argparse.Namespace) -> int:
     log = _open_log()
-    if args.verify:
+    entries = log.read_last(args.last) if args.last else log.read_all()
+
+    if args.json:
+        for e in entries:
+            print(json.dumps(e))
+        return 0
+
+    # ── pretty output ────────────────────────────────────────────────────────
+    n = len(entries)
+    blocks  = sum(1 for e in entries if e.get("event") == "block")
+    redacts = sum(1 for e in entries if e.get("event") == "redact")
+    warns   = sum(1 for e in entries if e.get("event") == "warn")
+    tokens_total = sum(e.get("count", 0) for e in entries if e.get("event") in ("redact", "warn"))
+
+    print()
+    print(BOLD(f"SESSION AUDIT") + DIM(f"  —  {n} event{'s' if n != 1 else ''}"))
+    print("─" * 64)
+    if not entries:
+        print(DIM("  (no events recorded yet)"))
+    else:
+        for e in entries:
+            print(_fmt_event(e))
+    print("─" * 64)
+
+    # summary line
+    parts = []
+    if blocks:
+        parts.append(RED(f"{blocks} blocked"))
+    if redacts:
+        parts.append(YELLOW(f"{redacts} redacted"))
+    if warns:
+        parts.append(YELLOW(f"{warns} warned"))
+    if tokens_total:
+        parts.append(DIM(f"{tokens_total} values replaced with [WALL:*] tokens"))
+    if parts:
+        print("  " + "  ·  ".join(parts))
+
+    # chain verify
+    if args.verify or n > 0:
         ok, msg = log.verify()
         if ok:
-            print("audit chain OK")
-            return 0
-        return _exit(f"audit chain BROKEN: {msg}")
-    entries = log.read_last(args.last) if args.last else log.read_all()
-    for e in entries:
-        print(json.dumps(e))
-    return 0
+            print("  " + GREEN("✓ chain intact"))
+        else:
+            print("  " + RED(f"✗ chain BROKEN: {msg}"))
+
+    # reveal hint
+    session_tokens: list[str] = []
+    s = SessionStore.open()
+    try:
+        session_tokens = [tok for _, _, tok in s.all_tokens()][:3]
+    except Exception:
+        pass
+    finally:
+        s.close()
+    if session_tokens:
+        print()
+        print(DIM("  Active tokens this session:"))
+        for tok in session_tokens:
+            print(DIM(f"    {tok}  →  claude-wall reveal '{tok}'"))
+
+    print()
+    return 0 if (not args.verify or log.verify()[0]) else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -169,6 +303,7 @@ def build_parser() -> argparse.ArgumentParser:
     audit = sub.add_parser("audit", help="print audit log")
     audit.add_argument("--verify", action="store_true", help="verify HMAC chain")
     audit.add_argument("--last", type=int, default=0, help="show only last N entries")
+    audit.add_argument("--json", action="store_true", help="raw JSONL output")
     audit.set_defaults(func=cmd_audit)
 
     return p
