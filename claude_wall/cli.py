@@ -19,6 +19,7 @@ from pathlib import Path
 from . import settings as S
 from .audit import AuditLog, generate_key
 from .session import SessionStore, session_db_path, session_root
+from .settings import SUPPORTED_CLIS, detect_cli
 
 
 def _exit(msg: str, code: int = 1) -> int:
@@ -38,35 +39,53 @@ def _confirm(msg: str, yes: bool) -> bool:
     return ans in {"y", "yes"}
 
 
+def _resolve_clis(cli_arg: str) -> list[str]:
+    if cli_arg == "all":
+        found = detect_cli()
+        return found if found else ["claude"]
+    if cli_arg == "auto":
+        found = detect_cli()
+        return [found[0]] if found else ["claude"]
+    return [cli_arg]
+
+
 def cmd_install(args: argparse.Namespace) -> int:
-    report = S.install(dry_run=True, yes=args.yes)
-    if args.dry_run:
-        print(json.dumps(report["after"], indent=2))
-        return 0
-    if not _confirm(
-        f"register claude-wall hooks in {report['path']}?", args.yes
-    ):
-        return _exit("aborted")
-    S.install(yes=True)
-    print(f"installed {report['added']} hooks in {report['path']}")
+    clis = _resolve_clis(args.cli)
+    for cli in clis:
+        report = S.install(cli=cli, dry_run=True, yes=args.yes)
+        if args.dry_run:
+            print(f"--- {cli} ({report['path']}) ---")
+            print(json.dumps(report["after"], indent=2))
+            continue
+        if not _confirm(
+            f"register claude-wall hooks in {report['path']}?", args.yes
+        ):
+            return _exit("aborted")
+        S.install(cli=cli, yes=True)
+        print(f"[{cli}] installed {report['added']} hooks in {report['path']}")
     return 0
 
 
 def cmd_uninstall(args: argparse.Namespace) -> int:
-    if not _confirm("remove claude-wall hooks?", args.yes):
-        return _exit("aborted")
-    report = S.uninstall(yes=True)
-    print(f"removed {report['removed']} hook command(s) from {report['path']}")
+    clis = _resolve_clis(args.cli)
+    for cli in clis:
+        if not _confirm(f"remove claude-wall hooks from {cli}?", args.yes):
+            return _exit("aborted")
+        report = S.uninstall(cli=cli, yes=True)
+        print(f"[{cli}] removed {report['removed']} hook command(s) from {report['path']}")
     return 0
 
 
-def cmd_status(_: argparse.Namespace) -> int:
-    st = S.status()
-    print(f"settings file:   {st['path']}")
-    print(f"installed:       {st['installed']}")
-    print(f"buckets:         {', '.join(st['hooks']) or '(none)'}")
-    print(f"session dir:     {session_db_path().parent}")
-    print(f"session db:      {session_db_path()}")
+def cmd_status(args: argparse.Namespace) -> int:
+    clis = _resolve_clis(getattr(args, "cli", "auto"))
+    for cli in clis:
+        st = S.status(cli=cli)
+        print(f"\n[{st['label']}]")
+        print(f"  settings file: {st['path']}")
+        print(f"  installed:     {st['installed']}")
+        print(f"  buckets:       {', '.join(st['hooks']) or '(none)'}")
+    print(f"\nsession dir:   {session_db_path().parent}")
+    print(f"session db:    {session_db_path()}")
     try:
         log = _open_log()
         entries = log.read_last(5)
@@ -125,16 +144,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    install = sub.add_parser("install", help="register hooks in ~/.claude/settings.json")
+    cli_choices = SUPPORTED_CLIS + ["all", "auto"]
+
+    install = sub.add_parser("install", help="register hooks in CLI settings file")
     install.add_argument("--dry-run", action="store_true")
     install.add_argument("--yes", "-y", action="store_true")
+    install.add_argument("--cli", default="auto", choices=cli_choices,
+                         help="target CLI: claude, codex, gemini, all, auto (default: auto-detect)")
     install.set_defaults(func=cmd_install)
 
     uninstall = sub.add_parser("uninstall", help="remove claude-wall hooks")
     uninstall.add_argument("--yes", "-y", action="store_true")
+    uninstall.add_argument("--cli", default="auto", choices=cli_choices)
     uninstall.set_defaults(func=cmd_uninstall)
 
     status = sub.add_parser("status", help="show hook + session status")
+    status.add_argument("--cli", default="auto", choices=cli_choices)
     status.set_defaults(func=cmd_status)
 
     reveal = sub.add_parser("reveal", help="reveal original value for a token")

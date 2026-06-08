@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import Any
 
 from ..workspace import WorkspaceGuard
-from ._common import block, open_session_and_audit, read_event
+from ._common import block, normalize_tool, open_session_and_audit, read_event
 
 
 def _extract_path(event: dict[str, Any]) -> str | None:
@@ -29,8 +30,10 @@ def _extract_command(event: dict[str, Any]) -> str | None:
 
 
 def main() -> int:
+    if os.environ.get("CLAUDE_WALL_DISABLED") == "1":
+        return 0
     event = read_event()
-    tool = event.get("tool_name")
+    tool = normalize_tool(event.get("tool_name"))
     session, audit = open_session_and_audit()
     try:
         guard = WorkspaceGuard()

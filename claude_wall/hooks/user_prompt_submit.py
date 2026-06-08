@@ -11,6 +11,8 @@ from ._common import block, open_session_and_audit, read_event, write_output
 
 
 def main() -> int:
+    if os.environ.get("CLAUDE_WALL_DISABLED") == "1":
+        return 0
     event = read_event()
     prompt = event.get("prompt")
     if not isinstance(prompt, str) or not prompt:

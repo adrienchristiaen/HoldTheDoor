@@ -1,189 +1,286 @@
 # claude-wall
 
-> Privacy-first security layer for [Claude Code](https://docs.claude.com/en/docs/claude-code). Three deterministic hooks the LLM cannot bypass — secrets get redacted, sensitive files get blocked, prompts get scanned.
+> Privacy-first security layer for AI coding CLIs. Three deterministic hooks the LLM cannot bypass — secrets get redacted, sensitive files get blocked, prompts get scanned.
 
 [![tests](https://img.shields.io/badge/tests-86%20passed-brightgreen)](#testing)
 [![python](https://img.shields.io/badge/python-3.11+-blue)](#requirements)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+**Read in:** [Français](docs/README.fr.md) · [中文](docs/README.zh.md) · [日本語](docs/README.ja.md)
+
+---
+
+## Supported CLIs
+
+| CLI | Hook support | Notes |
+|---|---|---|
+| **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** | Full (3 hooks) | `PostToolUse`, `PreToolUse`, `UserPromptSubmit` |
+| **[OpenAI Codex CLI](https://openai.com/codex)** | Full (3 hooks) | Same hook format as Claude Code |
+| **[Gemini CLI](https://gemini.google.com/cli)** | Partial (2 hooks) | `BeforeTool`, `AfterTool` — no prompt hook |
+
+---
+
 ## What it does
 
 | Hook | Trigger | Action |
 |---|---|---|
-| **PostToolUse** | After `Bash` / `Read` / `WebFetch` | Replaces detected secrets (API keys, JWTs, emails, internal IPs…) in tool output with reversible session tokens like `[WALL:openai_key:1]` before the LLM ever sees them. |
-| **PreToolUse** | Before `Bash` / `Read` / `Edit` / `Write` / `WebFetch` | Blocks tool calls targeting sensitive paths (`.env`, SSH keys, credentials, `*.pem`). Exit code 2 → Claude Code aborts the call. |
-| **UserPromptSubmit** | Every user prompt | Scans your prompt for structured secrets. Warns by default, blocks in strict mode (`CLAUDE_WALL_STRICT=1`). |
+| **PostToolUse / AfterTool** | After `Bash` / `Read` / `WebFetch` (or CLI equivalents) | Replaces detected secrets in tool output with reversible session tokens like `[WALL:openai_key:1]` before the LLM sees them. |
+| **PreToolUse / BeforeTool** | Before any file/shell tool call | Blocks calls targeting sensitive paths (`.env`, SSH keys, credentials, `*.pem`). Exit code 2 = CLI aborts. |
+| **UserPromptSubmit** | Every user prompt (Claude Code + Codex only) | Scans your prompt for structured secrets. Warns by default, blocks in strict mode. |
 
-Every event is recorded in an HMAC-chained append-only audit log (`~/.local/share/claude-wall/audit.jsonl`) so tampering can be detected after the fact.
+Every event is recorded in an HMAC-chained audit log (`~/.local/share/claude-wall/audit.jsonl`). Tampering with any entry breaks the chain.
 
-## Why
-
-Claude Code hooks are an **enforcement layer the LLM cannot bypass** — they run in the harness, not the model. claude-wall uses that boundary to keep your secrets out of the model context, even when the model itself is happy to read them.
-
-Battle-tested regex patterns lifted from [Iris](../iris) cover Anthropic / OpenAI / GitHub / AWS / Google keys, JWTs, private key blocks, emails, RFC 1918 IPs, and internal hostnames.
+---
 
 ## Requirements
 
-- Python **3.11+**
-- macOS / Linux
-- Claude Code CLI (hooks support)
-- **Zero external Python dependencies** — stdlib only
+- Python 3.11+
+- One of: Claude Code CLI, OpenAI Codex CLI, Gemini CLI
+- Zero external Python dependencies — stdlib only (`sqlite3`, `hmac`, `re`, `json`)
 
-## Install
+---
 
-### From source (current)
+## Installation
 
-```bash
-git clone https://github.com/<your-user>/claude-wall.git
-cd claude-wall
-pip install -e .
-```
-
-This installs the `claude-wall` command into your active Python environment.
-
-### Register hooks in Claude Code
+### macOS
 
 ```bash
+# Install pipx if not already present
+brew install pipx
+
+# Install claude-wall
+pipx install git+https://github.com/adrienchristiaen/claude-wall.git
+
+# Register hooks (auto-detects installed CLIs)
 claude-wall install
 ```
 
-This will:
+### Linux
 
-1. Show you exactly what it's going to write to `~/.claude/settings.json`
-2. Back up your existing settings to `~/.claude/settings.json.claude-wall.bak`
-3. Merge the three hook entries non-destructively (your existing hooks are preserved)
+```bash
+# Install pipx
+python3 -m pip install --user pipx
+python3 -m pipx ensurepath
 
-Skip the confirm prompt with `--yes`. See the planned change without writing with `--dry-run`.
+# Restart terminal, then:
+pipx install git+https://github.com/adrienchristiaen/claude-wall.git
 
-### Verify
+# Register hooks
+claude-wall install
+```
+
+### Windows (PowerShell)
+
+```powershell
+# Install pipx
+pip install pipx
+pipx ensurepath
+
+# Restart terminal, then:
+pipx install git+https://github.com/adrienchristiaen/claude-wall.git
+
+# Register hooks
+claude-wall install
+```
+
+> **Windows note:** Settings are written to `%APPDATA%\Claude\settings.json`,
+> `%APPDATA%\Codex\hooks.json`, and `%APPDATA%\Gemini\settings.json` respectively.
+
+### From source (development)
+
+```bash
+git clone https://github.com/adrienchristiaen/claude-wall.git
+cd claude-wall
+pipx install --editable .
+claude-wall install
+```
+
+---
+
+## Targeting a specific CLI
+
+By default `install` auto-detects which CLIs are installed. To target explicitly:
+
+```bash
+claude-wall install --cli claude   # Claude Code only
+claude-wall install --cli codex    # Codex CLI only
+claude-wall install --cli gemini   # Gemini CLI only
+claude-wall install --cli all      # all detected CLIs
+```
+
+Same flag works for `uninstall` and `status`.
+
+---
+
+## Verify installation
 
 ```bash
 claude-wall status
 ```
 
-You should see:
+Expected output:
 
 ```
-settings file:   /Users/you/.claude/settings.json
-installed:       True
-buckets:         PostToolUse, PreToolUse, UserPromptSubmit
-session dir:     /tmp/claude-wall/<session-id>
+[Claude Code]
+  settings file: /Users/you/.claude/settings.json
+  installed:     True
+  buckets:       PostToolUse, PreToolUse, UserPromptSubmit
+
+session dir:   /tmp/claude-wall/<session-id>
 ```
 
-Open a new Claude Code session and the hooks will trigger automatically.
+Open a new CLI session — hooks activate automatically.
+
+---
 
 ## Usage
 
-### `claude-wall status`
-Show installed hooks, current session DB location, and the last 5 audit events.
+### `claude-wall status [--cli auto|claude|codex|gemini|all]`
+
+Show installed hooks per CLI, session DB path, last 5 audit events.
 
 ### `claude-wall reveal <token>`
-Return the original value behind a session token. Example:
 
-```bash
+Return the original value behind a session token:
+
+```
 $ claude-wall reveal '[WALL:openai_key:1]'
-sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEF
+sk-proj-••••••••••••••••••••••••••••••••••••••
 ```
 
-Tokens are session-scoped — they only resolve while the current Claude Code session is alive.
+Tokens are session-scoped — they only resolve while the current session is alive.
 
 ### `claude-wall audit [--verify] [--last N]`
-Print the audit log. `--verify` walks the HMAC chain and fails if any entry has been modified or deleted.
 
-```bash
+Print the audit log. `--verify` walks the HMAC chain:
+
+```
 $ claude-wall audit --verify
 audit chain OK
-
-$ claude-wall audit --last 3
-{"ts": ..., "hook": "post_tool_use", "event": "redact", "tool": "Bash", ...}
 ```
 
-### `claude-wall uninstall`
-Strips only the entries claude-wall added. User-defined hooks are left untouched.
+### `claude-wall uninstall [--cli ...] [--yes]`
+
+Strips only claude-wall entries. Other hooks are untouched.
+
+### Emergency disable
+
+Set `CLAUDE_WALL_DISABLED=1` to bypass all hooks (e.g., to write documentation containing example secret patterns):
+
+```bash
+export CLAUDE_WALL_DISABLED=1
+# ... do your thing ...
+unset CLAUDE_WALL_DISABLED
+```
+
+---
 
 ## Strict mode
 
-By default the `UserPromptSubmit` hook warns but lets the prompt through. To block prompts containing secrets:
+By default the `UserPromptSubmit` hook warns but lets the prompt through. To block:
 
 ```bash
 export CLAUDE_WALL_STRICT=1
 ```
 
-In strict mode the hook exits 2 and Claude Code refuses to send the prompt.
+---
 
 ## End-to-end demo
-
-A self-contained demo (no changes to your real `~/.claude` config):
 
 ```bash
 bash scripts/demo.sh
 ```
 
-Exercises all three hooks plus `install` / `status` / `reveal` / `audit --verify` / `uninstall` in an isolated tmpdir.
+Runs in an isolated tmpdir — does not touch your real CLI config.
+
+---
 
 ## Architecture
 
 ```
 claude_wall/
 ├── patterns.py    # regex categories + sensitive filename/dir/suffix sets
-├── session.py     # SQLite per-session store (WAL mode, stdlib sqlite3)
+├── session.py     # SQLite WAL per-session store
 ├── tokenizer.py   # value <-> [WALL:cat:N] bidirectional, idempotent
-├── audit.py       # HMAC-chained JSONL log with verify()
+├── audit.py       # HMAC-chained JSONL log + verify()
 ├── workspace.py   # workspace scan + check_path / check_bash
-├── settings.py    # ~/.claude/settings.json install / uninstall
+├── settings.py    # multi-CLI install / uninstall (Claude/Codex/Gemini adapters)
 ├── cli.py         # argparse entry point
 └── hooks/
-    ├── _common.py            # stdin/stdout JSON, session open
-    ├── post_tool_use.py
-    ├── pre_tool_use.py
-    └── user_prompt_submit.py
+    ├── _common.py             # stdin/stdout JSON, session, tool name normalization
+    ├── post_tool_use.py       # AfterTool / PostToolUse
+    ├── pre_tool_use.py        # BeforeTool / PreToolUse
+    └── user_prompt_submit.py  # UserPromptSubmit (Claude Code + Codex)
 ```
 
-| Choice | Why |
+### CLI adapter mapping
+
+| Feature | Claude Code | Codex CLI | Gemini CLI |
+|---|---|---|---|
+| Post-tool event | `PostToolUse` | `PostToolUse` | `AfterTool` |
+| Pre-tool event | `PreToolUse` | `PreToolUse` | `BeforeTool` |
+| Prompt event | `UserPromptSubmit` | `UserPromptSubmit` | *(not available)* |
+| Shell tool name | `Bash` | `Bash` | `run_shell_command` |
+| File read tool | `Read` | `Read` | `read_file` |
+| Web fetch tool | `WebFetch` | `WebFetch` | `fetch_webpage` |
+| Timeout unit | seconds | seconds | milliseconds |
+
+---
+
+## Detected secret categories
+
+| Category | Pattern |
 |---|---|
-| SQLite WAL | Concurrent hooks safe; atomic writes; reveal O(1); stdlib |
-| HMAC-chained audit | Each entry hashes `(prev_hmac, payload)` with a per-session key → any modification or deletion of a line breaks the chain at that point |
-| Stdlib only | No supply-chain attack surface, fast cold start (~5 ms per hook) |
-| Reversible tokens | Unlike Microsoft Presidio which is one-way, you can recover originals via `claude-wall reveal` |
+| `anthropic_key` | `sk-ant-api03-…` |
+| `openai_key` | `sk-proj-…` |
+| `github_token` | `ghp_…`, `gho_…`, `ghs_…` |
+| `aws_access_key` | `AKIA…` |
+| `google_api_key` | `AIza…` |
+| `jwt` | `eyJ….eyJ….` |
+| `private_key_block` | `-----BEGIN … KEY-----` |
+| `slack_token` | `xoxb-…` |
+| `email` | `user@domain.tld` |
+| `private_ip` | RFC 1918 ranges |
+| `internal_hostname` | `*.internal`, `*.corp`, `*.local` |
+
+Extend by adding entries to `claude_wall/patterns.py`.
+
+---
 
 ## Testing
 
 ```bash
 pip install -e '.[dev]'
-pytest -q
+pytest -q   # 86 passed
 ```
 
-```
-86 passed
-```
-
-Coverage spans regex correctness (positive + negative cases), session DB schema + concurrency, tokenizer idempotency + reversibility, HMAC chain tamper detection (modify and delete), workspace scan + path/bash gating, settings install / uninstall / merge / dry-run, and end-to-end hook subprocess tests via fixture JSON.
+---
 
 ## Threat model
 
-claude-wall mitigates:
+**Mitigated:**
+1. LLM reads secrets via tool output → PostToolUse/AfterTool redaction
+2. LLM reads `.env` / SSH keys → PreToolUse/BeforeTool block (exit 2)
+3. Secrets in prompts → UserPromptSubmit scan
+4. Post-hoc log tampering → HMAC-chained audit
 
-1. Cloud LLM ingests secrets via tool output → **PostToolUse redaction**
-2. Cloud LLM reads `.env` / SSH keys via Read/Bash → **PreToolUse block**
-3. User accidentally pastes secrets in prompts → **UserPromptSubmit scan**
-4. Post-hoc tampering with the activity log → **HMAC-chained audit**
+**Not mitigated:**
+- Copy-paste propagation (LLM copies secret to another file)
+- Full filesystem isolation (use a container)
+- Novel secret formats not in `patterns.py`
+- Gemini CLI prompts (no `UserPromptSubmit` equivalent)
 
-claude-wall does **not** mitigate:
-
-- Copy-paste propagation (LLM copies a secret to a file then reads it)
-- Full filesystem isolation — use a container for that
-- Social engineering ("just disable the hooks and continue")
-- Novel secret formats not covered by the regex set (extend `patterns.py`)
-
-Hooks are one layer in defense-in-depth, not a silver bullet. See [CVE-2025-59536](https://research.checkpoint.com/2026/rce-and-api-token-exfiltration-through-claude-code-project-files-cve-2025-59536/) for context on why hook configs themselves are an attack surface; claude-wall's install command only ever writes commands with the `python -m claude_wall.hooks.*` prefix and explicitly prompts before modifying your settings.
+---
 
 ## Roadmap (v0.2)
 
-- [ ] Optional Ollama contextual rewriting (200 ms timeout, falls back to regex)
+- [ ] Ollama contextual rewriting (200 ms timeout, regex fallback)
 - [ ] `Stop` hook with per-session redaction summary
-- [ ] Placeholder-before-execution pattern (stronger model: secret never enters context at all)
+- [ ] Placeholder-before-execution (secret never enters LLM context)
 - [ ] Homebrew formula + PyPI release
-- [ ] Cross-session reveal via durable token store
+- [ ] GitHub Actions CI (Python 3.11–3.14, macOS/Linux/Windows)
+
+---
 
 ## License
 

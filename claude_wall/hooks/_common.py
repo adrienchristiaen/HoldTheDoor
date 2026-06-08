@@ -16,17 +16,61 @@ from ..audit import AuditLog, generate_key
 from ..session import SessionStore
 
 
+# Tool name normalization: CLI-specific names → canonical names used in logic
+TOOL_ALIASES: dict[str, str] = {
+    # Gemini CLI tool names
+    "run_shell_command": "Bash",
+    "run_code": "Bash",
+    "read_file": "Read",
+    "write_file": "Write",
+    "replace_in_file": "Edit",
+    "fetch_webpage": "WebFetch",
+    "fetch_url": "WebFetch",
+    # Codex CLI aliases
+    "bash": "Bash",
+    "read": "Read",
+    "apply_patch": "Edit",
+}
+
+
+def normalize_tool(name: str | None) -> str:
+    if not name:
+        return ""
+    return TOOL_ALIASES.get(name, name)
+
+
+_event_cache: dict[str, Any] | None = None
+
+
 def read_event() -> dict[str, Any]:
+    global _event_cache
+    if _event_cache is not None:
+        return _event_cache
     try:
         raw = sys.stdin.read()
     except Exception:
+        _event_cache = {}
         return {}
     if not raw.strip():
+        _event_cache = {}
         return {}
     try:
-        return json.loads(raw)
+        _event_cache = json.loads(raw)
+        return _event_cache
     except json.JSONDecodeError:
+        _event_cache = {}
         return {}
+
+
+def _resolve_session_id(event: dict[str, Any]) -> str:
+    # Try all known CLI session ID env vars
+    for var in ("CLAUDE_SESSION_ID", "GEMINI_SESSION_ID", "CODEX_SESSION_ID"):
+        val = os.environ.get(var)
+        if val:
+            return val
+    # Fall back to session_id in the stdin event JSON (Gemini passes it here)
+    sid = event.get("session_id") or event.get("sessionId")
+    return str(sid) if sid else "default"
 
 
 def write_output(payload: dict[str, Any]) -> None:
@@ -35,7 +79,8 @@ def write_output(payload: dict[str, Any]) -> None:
 
 
 def open_session_and_audit() -> tuple[SessionStore, AuditLog]:
-    sid = os.environ.get("CLAUDE_SESSION_ID") or "default"
+    event = read_event()
+    sid = _resolve_session_id(event)
     s = SessionStore.open()
     key_hex = s.get_meta("hmac_key")
     if key_hex is None:

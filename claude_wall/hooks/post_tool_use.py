@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import Any
 
 from ..tokenizer import Tokenizer
-from ._common import open_session_and_audit, read_event, write_output
+from ._common import normalize_tool, open_session_and_audit, read_event, write_output
 
 TARGET_TOOLS = {"Bash", "Read", "WebFetch"}
 
@@ -24,8 +25,10 @@ def _extract_output(event: dict[str, Any]) -> str | None:
 
 
 def main() -> int:
+    if os.environ.get("CLAUDE_WALL_DISABLED") == "1":
+        return 0
     event = read_event()
-    tool = event.get("tool_name")
+    tool = normalize_tool(event.get("tool_name"))
     if tool not in TARGET_TOOLS:
         return 0
     output = _extract_output(event)
