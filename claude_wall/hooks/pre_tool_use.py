@@ -50,6 +50,7 @@ def main() -> int:
                         categories=[],
                         count=0,
                         reason=reason,
+                        target=cmd[:120],
                     )
                     block(f"bash command blocked: {reason}")
         else:
@@ -64,6 +65,7 @@ def main() -> int:
                         categories=[],
                         count=0,
                         reason=reason,
+                        target=path,
                     )
                     block(f"path {path!r} blocked: {reason}")
         return 0

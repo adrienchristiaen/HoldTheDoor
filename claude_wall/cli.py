@@ -65,9 +65,12 @@ def _fmt_event(e: dict) -> str:
     reason  = e.get("reason", "")
     ts      = _fmt_ts(e["ts"]) if "ts" in e else "??:??:??"
 
+    target  = e.get("target", "")
+
     # detail line
     if event == "block":
-        detail = f"{BOLD(tool)}  →  {reason or 'blocked'}"
+        target_str = f"  {DIM(target)}" if target else ""
+        detail = f"{BOLD(tool)}{target_str}  →  {reason or 'blocked'}"
     elif event in ("redact", "warn") and cats:
         tokens = ", ".join(f"[WALL:{c}:*]" for c in cats[:3])
         detail = f"{BOLD(tool)}  →  {count}× {', '.join(cats)}  ({tokens})"

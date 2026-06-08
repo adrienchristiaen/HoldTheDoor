@@ -75,6 +75,7 @@ class AuditLog:
         categories: list[str],
         count: int,
         reason: str | None = None,
+        target: str | None = None,
     ) -> None:
         payload: dict = {
             "ts": time.time(),
@@ -86,6 +87,8 @@ class AuditLog:
         }
         if reason is not None:
             payload["reason"] = reason
+        if target is not None:
+            payload["target"] = target
         prev = self._last_hmac()
         payload["prev_hmac"] = prev
         payload["hmac"] = _compute_hmac(self.hmac_key, prev, {
