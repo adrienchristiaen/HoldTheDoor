@@ -52,7 +52,12 @@ _HOOK_SHORT = {
 
 
 def _fmt_ts(ts: float) -> str:
-    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%H:%M:%S")
+    # local time, with date if not today
+    local = datetime.fromtimestamp(ts)
+    now = datetime.now()
+    if local.date() == now.date():
+        return local.strftime("%H:%M:%S")
+    return local.strftime("%m-%d %H:%M")
 
 
 def _fmt_event(e: dict) -> str:
@@ -64,6 +69,8 @@ def _fmt_event(e: dict) -> str:
     count   = e.get("count", 0)
     reason  = e.get("reason", "")
     ts      = _fmt_ts(e["ts"]) if "ts" in e else "??:??:??"
+    sid     = e.get("session", "")
+    sid_str = DIM(f" [{sid[:8]}]") if sid and sid != "default" else ""
 
     target  = e.get("target", "")
 
@@ -77,7 +84,7 @@ def _fmt_event(e: dict) -> str:
     else:
         detail = f"{BOLD(tool)}"
 
-    return f"  {DIM(ts)}  {icon} {event:<7}  {DIM(hook)}  {detail}"
+    return f"  {DIM(ts)}{sid_str}  {icon} {event:<7}  {DIM(hook)}  {detail}"
 
 
 def _exit(msg: str, code: int = 1) -> int:

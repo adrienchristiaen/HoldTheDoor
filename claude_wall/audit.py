@@ -17,6 +17,7 @@ import os
 import secrets
 import time
 from dataclasses import dataclass, field
+from datetime import timezone
 from hashlib import sha256
 from pathlib import Path
 
@@ -77,8 +78,10 @@ class AuditLog:
         reason: str | None = None,
         target: str | None = None,
     ) -> None:
+        session_id = os.environ.get("CLAUDE_SESSION_ID") or "default"
         payload: dict = {
             "ts": time.time(),
+            "session": session_id[:16],
             "hook": hook,
             "event": event,
             "tool": tool,
