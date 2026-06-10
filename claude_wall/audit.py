@@ -78,7 +78,11 @@ class AuditLog:
         reason: str | None = None,
         target: str | None = None,
     ) -> None:
-        session_id = os.environ.get("CLAUDE_SESSION_ID") or "default"
+        # Claude Code sets CLAUDE_SESSION_ID as env var for hook processes
+        session_id = (os.environ.get("CLAUDE_SESSION_ID")
+                      or os.environ.get("GEMINI_SESSION_ID")
+                      or os.environ.get("CODEX_SESSION_ID")
+                      or "default")
         payload: dict = {
             "ts": time.time(),
             "session": session_id[:16],

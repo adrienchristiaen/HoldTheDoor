@@ -69,8 +69,8 @@ def _fmt_event(e: dict) -> str:
     count   = e.get("count", 0)
     reason  = e.get("reason", "")
     ts      = _fmt_ts(e["ts"]) if "ts" in e else "??:??:??"
-    sid     = e.get("session", "")
-    sid_str = DIM(f" [{sid[:8]}]") if sid and sid != "default" else ""
+    sid     = e.get("session", "") or "default"
+    sid_str = DIM(f" [{sid[:8]}]")
 
     target  = e.get("target", "")
 
