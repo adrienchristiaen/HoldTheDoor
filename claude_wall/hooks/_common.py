@@ -62,13 +62,32 @@ def read_event() -> dict[str, Any]:
         return {}
 
 
+_CLI_ENV_MARKERS = [
+    ("CLAUDE_SESSION_ID",  "claude"),
+    ("GEMINI_SESSION_ID",  "gemini"),
+    ("CODEX_SESSION_ID",   "codex"),
+    ("MISTRAL_SESSION_ID", "mistral"),
+]
+
+
+def detect_source_cli(event: dict[str, Any]) -> str:
+    """Return which CLI triggered this hook invocation."""
+    for env_var, name in _CLI_ENV_MARKERS:
+        if os.environ.get(env_var):
+            return name
+    # Gemini / others pass session info in stdin JSON
+    if event.get("session_id") or event.get("sessionId"):
+        hook_event = event.get("hook_event_name", "")
+        if hook_event in ("BeforeTool", "AfterTool", "BeforeAgent", "AfterAgent"):
+            return "gemini"
+    return "unknown"
+
+
 def _resolve_session_id(event: dict[str, Any]) -> str:
-    # Try all known CLI session ID env vars
-    for var in ("CLAUDE_SESSION_ID", "GEMINI_SESSION_ID", "CODEX_SESSION_ID"):
-        val = os.environ.get(var)
+    for env_var, _ in _CLI_ENV_MARKERS:
+        val = os.environ.get(env_var)
         if val:
             return val
-    # Fall back to session_id in the stdin event JSON (Gemini passes it here)
     sid = event.get("session_id") or event.get("sessionId")
     return str(sid) if sid else "default"
 
@@ -97,13 +116,15 @@ def _load_persistent_hmac_key() -> bytes:
     return key
 
 
-def open_session_and_audit() -> tuple[SessionStore, AuditLog]:
+def open_session_and_audit() -> tuple[SessionStore, AuditLog, str]:
+    """Return (session, audit, source_cli)."""
     event = read_event()
     _resolve_session_id(event)
     s = SessionStore.open()
     key = _load_persistent_hmac_key()
     audit = AuditLog(hmac_key=key)
-    return s, audit
+    cli = detect_source_cli(event)
+    return s, audit, cli
 
 
 def block(reason: str, exit_code: int = 2) -> None:

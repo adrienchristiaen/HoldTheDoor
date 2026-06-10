@@ -34,7 +34,7 @@ def main() -> int:
     output = _extract_output(event)
     if not output:
         return 0
-    session, audit = open_session_and_audit()
+    session, audit, cli = open_session_and_audit()
     try:
         tokenizer = Tokenizer(session)
         redacted, used = tokenizer.tokenize(output)
@@ -47,6 +47,7 @@ def main() -> int:
             tool=tool,
             categories=categories,
             count=len(used),
+            cli=cli,
         )
         write_output({
             "hookSpecificOutput": {

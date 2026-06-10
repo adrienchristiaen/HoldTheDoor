@@ -77,15 +77,17 @@ class AuditLog:
         count: int,
         reason: str | None = None,
         target: str | None = None,
+        cli: str | None = None,
     ) -> None:
-        # Claude Code sets CLAUDE_SESSION_ID as env var for hook processes
         session_id = (os.environ.get("CLAUDE_SESSION_ID")
                       or os.environ.get("GEMINI_SESSION_ID")
                       or os.environ.get("CODEX_SESSION_ID")
+                      or os.environ.get("MISTRAL_SESSION_ID")
                       or "default")
         payload: dict = {
             "ts": time.time(),
             "session": session_id[:16],
+            "cli": cli or "unknown",
             "hook": hook,
             "event": event,
             "tool": tool,

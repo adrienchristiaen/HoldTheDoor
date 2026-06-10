@@ -70,7 +70,9 @@ def _fmt_event(e: dict) -> str:
     reason  = e.get("reason", "")
     ts      = _fmt_ts(e["ts"]) if "ts" in e else "??:??:??"
     sid     = e.get("session", "") or "default"
+    src_cli = e.get("cli", "")
     sid_str = DIM(f" [{sid[:8]}]")
+    cli_str = DIM(f" {src_cli}") if src_cli and src_cli != "unknown" else ""
 
     target  = e.get("target", "")
 
@@ -84,7 +86,7 @@ def _fmt_event(e: dict) -> str:
     else:
         detail = f"{BOLD(tool)}"
 
-    return f"  {DIM(ts)}{sid_str}  {icon} {event:<7}  {DIM(hook)}  {detail}"
+    return f"  {DIM(ts)}{sid_str}{cli_str}  {icon} {event:<7}  {DIM(hook)}  {detail}"
 
 
 def _exit(msg: str, code: int = 1) -> int:

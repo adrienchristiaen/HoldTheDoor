@@ -34,7 +34,7 @@ def main() -> int:
         return 0
     event = read_event()
     tool = normalize_tool(event.get("tool_name"))
-    session, audit = open_session_and_audit()
+    session, audit, cli = open_session_and_audit()
     try:
         guard = WorkspaceGuard()
         guard.scan()
@@ -51,6 +51,7 @@ def main() -> int:
                         count=0,
                         reason=reason,
                         target=cmd[:120],
+                        cli=cli,
                     )
                     block(f"bash command blocked: {reason}")
         else:
@@ -66,6 +67,7 @@ def main() -> int:
                         count=0,
                         reason=reason,
                         target=path,
+                        cli=cli,
                     )
                     block(f"path {path!r} blocked: {reason}")
         return 0

@@ -17,7 +17,7 @@ def main() -> int:
     prompt = event.get("prompt")
     if not isinstance(prompt, str) or not prompt:
         return 0
-    session, audit = open_session_and_audit()
+    session, audit, cli = open_session_and_audit()
     try:
         tokenizer = Tokenizer(session)
         redacted, used = tokenizer.tokenize(prompt)
@@ -32,6 +32,7 @@ def main() -> int:
                 tool=None,
                 categories=categories,
                 count=len(used),
+                cli=cli,
             )
             block(
                 f"prompt contains {len(used)} sensitive value(s) in categories {categories}"
@@ -42,6 +43,7 @@ def main() -> int:
             tool=None,
             categories=categories,
             count=len(used),
+            cli=cli,
         )
         warning = (
             f"⚠ claude-wall: {len(used)} sensitive value(s) detected in your prompt "
