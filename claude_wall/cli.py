@@ -186,14 +186,8 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def _open_log() -> AuditLog:
-    s = SessionStore.open()
-    try:
-        key_hex = s.get_meta("hmac_key")
-    finally:
-        s.close()
-    if key_hex is None:
-        return AuditLog(hmac_key=generate_key())
-    return AuditLog(hmac_key=bytes.fromhex(key_hex))
+    from .hooks._common import _load_persistent_hmac_key
+    return AuditLog(hmac_key=_load_persistent_hmac_key())
 
 
 def cmd_reveal(args: argparse.Namespace) -> int:

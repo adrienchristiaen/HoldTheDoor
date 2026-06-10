@@ -150,8 +150,14 @@ class WorkspaceGuard:
         for pat, reason in _BLOCKED_BASH_PATTERNS:
             if pat.search(command):
                 return True, reason
-        # Check any path-like arg
-        tokens = re.findall(r"[~./\w\-]+", command)
+        # Truncate at message-like flags: everything after -m / --message /
+        # --tag / --body is a human-readable value, not a path to scan.
+        stripped = re.split(r'\s(?:-m|--message|--body|--tag)\s', command, maxsplit=1)[0]
+        # Also strip remaining quoted strings (with DOTALL for multiline)
+        stripped = re.sub(r'"[\s\S]*?"', '', stripped, flags=re.DOTALL)
+        stripped = re.sub(r"'[\s\S]*?'", '', stripped, flags=re.DOTALL)
+        # Check path-like tokens in what remains
+        tokens = re.findall(r"[~./\w\-]+", stripped)
         for tok in tokens:
             if "/" in tok or tok.startswith("."):
                 blocked, reason = self.check_path(tok)

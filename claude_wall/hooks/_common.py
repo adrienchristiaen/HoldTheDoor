@@ -78,16 +78,30 @@ def write_output(payload: dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
+def _load_persistent_hmac_key() -> bytes:
+    """Load (or create) the persistent HMAC key stored next to the audit log.
+
+    Stored at ~/.local/share/claude-wall/hmac.key so it survives across
+    sessions and /tmp clears — enabling cross-session chain verification.
+    """
+    from ..audit import default_audit_path
+    key_path = default_audit_path().parent / "hmac.key"
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    if key_path.exists():
+        data = key_path.read_bytes()
+        if len(data) == 32:
+            return data
+    key = generate_key()
+    key_path.write_bytes(key)
+    key_path.chmod(0o600)
+    return key
+
+
 def open_session_and_audit() -> tuple[SessionStore, AuditLog]:
     event = read_event()
-    sid = _resolve_session_id(event)
+    _resolve_session_id(event)
     s = SessionStore.open()
-    key_hex = s.get_meta("hmac_key")
-    if key_hex is None:
-        key = generate_key()
-        s.set_meta("hmac_key", key.hex())
-    else:
-        key = bytes.fromhex(key_hex)
+    key = _load_persistent_hmac_key()
     audit = AuditLog(hmac_key=key)
     return s, audit
 
