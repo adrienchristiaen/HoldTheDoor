@@ -1,4 +1,4 @@
-"""Manage claude-wall hook registration across Claude Code, Codex CLI, and Gemini CLI.
+"""Manage holdthedoor hook registration across Claude Code, Codex CLI, and Gemini CLI.
 
 Operations:
 
@@ -8,7 +8,7 @@ Operations:
 - `detect_cli()` — return list of installed CLI names
 
 Hook ownership is tracked by command prefix: anything starting with
-`python -m claude_wall.hooks.` or `python3 -m claude_wall.hooks.` is ours;
+`python -m holdthedoor.hooks.` or `python3 -m holdthedoor.hooks.` is ours;
 everything else (user-defined hooks, hooks from other tools) is left alone.
 
 Supported CLIs
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 from copy import deepcopy
@@ -37,7 +38,7 @@ CLI_ADAPTERS: dict[str, dict] = {
     "claude": {
         "label": "Claude Code",
         "binary": "claude",
-        "settings_env": "CLAUDE_WALL_SETTINGS_PATH",
+        "settings_env": "HOLDTHEDOOR_SETTINGS_PATH",
         "default_settings": "~/.claude/settings.json",
         "windows_settings": "~/AppData/Roaming/Claude/settings.json",
         "hooks_key": "hooks",
@@ -53,7 +54,7 @@ CLI_ADAPTERS: dict[str, dict] = {
     "codex": {
         "label": "OpenAI Codex CLI",
         "binary": "codex",
-        "settings_env": None,
+        "settings_env": "HOLDTHEDOOR_CODEX_SETTINGS_PATH",
         "default_settings": "~/.codex/hooks.json",
         "windows_settings": "~/AppData/Roaming/Codex/hooks.json",
         "hooks_key": "hooks",
@@ -69,7 +70,7 @@ CLI_ADAPTERS: dict[str, dict] = {
     "gemini": {
         "label": "Gemini CLI",
         "binary": "gemini",
-        "settings_env": None,
+        "settings_env": "HOLDTHEDOOR_GEMINI_SETTINGS_PATH",
         "default_settings": "~/.gemini/settings.json",
         "windows_settings": "~/AppData/Roaming/Gemini/settings.json",
         "hooks_key": "hooks",
@@ -87,16 +88,19 @@ CLI_ADAPTERS: dict[str, dict] = {
 SUPPORTED_CLIS = list(CLI_ADAPTERS.keys())
 
 
-def _hook_command(module: str) -> str:
-    # Use the exact Python that's running claude-wall (pipx venv, conda env, etc.)
-    # so the hook process can always import claude_wall regardless of PATH.
-    return f"{sys.executable} -m {module}"
+def _hook_command(module: str, cli: str) -> str:
+    # Use the exact Python that's running holdthedoor (pipx venv, conda env, etc.)
+    # so the hook process can always import holdthedoor regardless of PATH.
+    # `--cli` tags which adapter installed this hook: Codex CLI sets no
+    # identifying env var at hook runtime (unlike Claude Code), so without
+    # this the hook can't tell Codex apart from "unknown" at all.
+    return f"{sys.executable} -m {module} --cli {cli}"
 
 
 OUR_COMMAND_PREFIXES = (
-    "python -m claude_wall.hooks.",
-    "python3 -m claude_wall.hooks.",
-    f"{sys.executable} -m claude_wall.hooks.",
+    "python -m holdthedoor.hooks.",
+    "python3 -m holdthedoor.hooks.",
+    f"{sys.executable} -m holdthedoor.hooks.",
 )
 
 
@@ -121,7 +125,41 @@ def settings_path(cli: str = "claude") -> Path:
 
 def backup_path(cli: str = "claude") -> Path:
     p = settings_path(cli)
-    return p.with_suffix(p.suffix + ".claude-wall.bak")
+    return p.with_suffix(p.suffix + ".holdthedoor.bak")
+
+
+def _codex_config_path() -> Path:
+    override = os.environ.get("HOLDTHEDOOR_CODEX_CONFIG_PATH")
+    if override:
+        return Path(override)
+    return Path("~/.codex/config.toml").expanduser()
+
+
+def _codex_feature_flag_enabled() -> bool:
+    path = _codex_config_path()
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    return re.search(r"^\s*codex_hooks\s*=\s*true", text, re.MULTILINE) is not None
+
+
+def _ensure_codex_feature_flag() -> None:
+    """Codex CLI hooks are inert unless `codex_hooks = true` under [features]
+    in ~/.codex/config.toml. Without this, an installed hooks.json silently
+    does nothing — so `install(cli="codex")` sets it, backing up first."""
+    path = _codex_config_path()
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    if re.search(r"^\s*codex_hooks\s*=\s*true", text, re.MULTILINE):
+        return
+    if path.exists():
+        path.with_suffix(path.suffix + ".holdthedoor.bak").write_text(text, encoding="utf-8")
+    if re.search(r"^\s*\[features\]", text, re.MULTILINE):
+        text = re.sub(r"^\s*\[features\]", "[features]\ncodex_hooks = true", text, count=1, flags=re.MULTILINE)
+    else:
+        sep = "\n\n" if text.strip() else ""
+        text = text.rstrip("\n") + sep + "[features]\ncodex_hooks = true\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
 
 
 def _load(path: Path) -> dict:
@@ -144,33 +182,33 @@ def _hooks_spec(cli: str) -> list[dict]:
         specs.append({
             "bucket": a["post_event"],
             "matcher": a["post_matcher"],
-            "module": "claude_wall.hooks.post_tool_use",
+            "module": "holdthedoor.hooks.post_tool_use",
             "timeout": a["timeout"],
         })
     if a["pre_event"]:
         specs.append({
             "bucket": a["pre_event"],
             "matcher": a["pre_matcher"],
-            "module": "claude_wall.hooks.pre_tool_use",
+            "module": "holdthedoor.hooks.pre_tool_use",
             "timeout": a["timeout"],
         })
     if a["prompt_event"]:
         specs.append({
             "bucket": a["prompt_event"],
             "matcher": a["prompt_matcher"],
-            "module": "claude_wall.hooks.user_prompt_submit",
+            "module": "holdthedoor.hooks.user_prompt_submit",
             "timeout": a["timeout"],
         })
     return specs
 
 
-def _build_hook_entry(spec: dict) -> dict:
+def _build_hook_entry(spec: dict, cli: str) -> dict:
     entry: dict = {
         "matcher": spec["matcher"],
         "hooks": [
             {
                 "type": "command",
-                "command": _hook_command(spec["module"]),
+                "command": _hook_command(spec["module"], cli),
                 "timeout": spec["timeout"],
             }
         ],
@@ -210,7 +248,7 @@ def detect_cli() -> list[str]:
 # ---------------------------------------------------------------------------
 
 def install(cli: str = "claude", *, dry_run: bool = False, yes: bool = False) -> dict:
-    """Register claude-wall hooks for `cli`. Returns a report dict."""
+    """Register holdthedoor hooks for `cli`. Returns a report dict."""
     if cli not in CLI_ADAPTERS:
         raise ValueError(f"unknown CLI {cli!r}, choose from {SUPPORTED_CLIS}")
     path = settings_path(cli)
@@ -223,7 +261,7 @@ def install(cli: str = "claude", *, dry_run: bool = False, yes: bool = False) ->
     for spec in specs:
         bucket = hooks_root.setdefault(spec["bucket"], [])
         stripped = _strip_ours(bucket)
-        stripped.append(_build_hook_entry(spec))
+        stripped.append(_build_hook_entry(spec, cli))
         hooks_root[spec["bucket"]] = stripped
         added += 1
 
@@ -232,10 +270,12 @@ def install(cli: str = "claude", *, dry_run: bool = False, yes: bool = False) ->
         "added": added,
         "dry_run": dry_run,
         "path": str(path),
-        "diff_summary": f"+{added} claude-wall hook entries for {cli}",
+        "diff_summary": f"+{added} holdthedoor hook entries for {cli}",
         "before": before,
         "after": data,
     }
+    if cli == "codex":
+        report["codex_feature_flag_needed"] = not _codex_feature_flag_enabled()
     if dry_run:
         return report
 
@@ -243,6 +283,11 @@ def install(cli: str = "claude", *, dry_run: bool = False, yes: bool = False) ->
         backup_path(cli).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    if cli == "codex":
+        _ensure_codex_feature_flag()
+        report["codex_feature_flag_needed"] = False
+
     return report
 
 

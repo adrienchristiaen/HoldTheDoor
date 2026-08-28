@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from claude_wall.session import SessionStore, resolve_session_id
+from holdthedoor.session import SessionStore, resolve_session_id
 
 
 class TestResolveSessionId:

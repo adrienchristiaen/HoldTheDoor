@@ -1,6 +1,6 @@
 """Shared helpers for hook entry points.
 
-Each hook runs as `python -m claude_wall.hooks.<name>`: reads a single JSON
+Each hook runs as `python -m holdthedoor.hooks.<name>`: reads a single JSON
 event from stdin, processes it, optionally writes a JSON response to stdout,
 and exits with the appropriate code (0 = pass, 2 = block).
 """
@@ -70,8 +70,25 @@ _CLI_ENV_MARKERS = [
 ]
 
 
+def _cli_from_argv() -> str | None:
+    """`--cli <name>` is stamped into the hook command by settings.py at
+    install time (see settings._hook_command). This is the only reliable
+    signal for Codex: unlike Claude Code, Codex sets no identifying env var
+    at hook runtime, so without this every Codex event would misdetect as
+    "unknown"."""
+    argv = sys.argv[1:]
+    if "--cli" in argv:
+        i = argv.index("--cli")
+        if i + 1 < len(argv):
+            return argv[i + 1]
+    return None
+
+
 def detect_source_cli(event: dict[str, Any]) -> str:
     """Return which CLI triggered this hook invocation."""
+    tagged = _cli_from_argv()
+    if tagged:
+        return tagged
     for env_var, name in _CLI_ENV_MARKERS:
         if os.environ.get(env_var):
             return name
@@ -100,7 +117,7 @@ def write_output(payload: dict[str, Any]) -> None:
 def _load_persistent_hmac_key() -> bytes:
     """Load (or create) the persistent HMAC key stored next to the audit log.
 
-    Stored at ~/.local/share/claude-wall/hmac.key so it survives across
+    Stored at ~/.local/share/holdthedoor/hmac.key so it survives across
     sessions and /tmp clears — enabling cross-session chain verification.
     """
     from ..audit import default_audit_path
@@ -128,5 +145,9 @@ def open_session_and_audit() -> tuple[SessionStore, AuditLog, str]:
 
 
 def block(reason: str, exit_code: int = 2) -> None:
-    sys.stderr.write(f"claude-wall: {reason}\n")
+    # Claude Code honors exit code 2 + stderr. Codex CLI's documented block
+    # protocol is a stdout JSON {"decision": "block", "reason": ...} — emit
+    # both so either interpretation stops the tool call.
+    write_output({"decision": "block", "reason": reason})
+    sys.stderr.write(f"holdthedoor: {reason}\n")
     sys.exit(exit_code)

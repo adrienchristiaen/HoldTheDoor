@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from claude_wall.workspace import WorkspaceGuard
+from holdthedoor.workspace import WorkspaceGuard
 
 
 @pytest.fixture

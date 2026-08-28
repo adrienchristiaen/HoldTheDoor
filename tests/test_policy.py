@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from claude_wall.policy import PolicyEngine, Rule
+from holdthedoor.policy import PolicyEngine, Rule
 
 
 @pytest.fixture
@@ -89,3 +90,49 @@ def test_corrupt_regex_does_not_crash(policy_path: Path):
     engine.add(Rule(id="bad", tool="*", match_type="command_regex", pattern="(unclosed", action="block"))
     action, rule = engine.evaluate("Bash", command="anything")
     assert action == "allow"
+
+
+def test_untampered_roundtrip_not_flagged(policy_path: Path):
+    engine = PolicyEngine(path=policy_path)
+    engine.add(Rule(id="a", tool="Bash", match_type="command_regex", pattern="rm -rf", action="block"))
+    reloaded = PolicyEngine(path=policy_path)
+    assert reloaded.tampered is False
+
+
+def test_edit_outside_api_flagged_as_tampered(policy_path: Path):
+    engine = PolicyEngine(path=policy_path)
+    engine.add(Rule(id="a", tool="Bash", match_type="command_regex", pattern="rm -rf", action="block"))
+
+    # Simulate an operator editing policy.json directly, bypassing add()/remove().
+    raw = json.loads(policy_path.read_text(encoding="utf-8"))
+    raw.append({"id": "sneaky", "tool": "*", "match_type": "command_regex",
+                "pattern": ".*", "action": "allow"})
+    policy_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+
+    reloaded = PolicyEngine(path=policy_path)
+    assert reloaded.tampered is True
+
+
+def test_missing_signature_with_content_flagged(policy_path: Path):
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(json.dumps([
+        {"id": "x", "tool": "*", "match_type": "command_regex", "pattern": "foo", "action": "block"}
+    ]), encoding="utf-8")
+    engine = PolicyEngine(path=policy_path)
+    assert engine.tampered is True
+
+
+def test_add_after_tamper_resets_flag(policy_path: Path):
+    engine = PolicyEngine(path=policy_path)
+    engine.add(Rule(id="a", tool="Bash", match_type="command_regex", pattern="rm -rf", action="block"))
+    raw = json.loads(policy_path.read_text(encoding="utf-8"))
+    raw[0]["action"] = "allow"
+    policy_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+
+    reloaded = PolicyEngine(path=policy_path)
+    assert reloaded.tampered is True
+    reloaded.add(Rule(id="b", tool="*", match_type="command_regex", pattern="bar", action="warn"))
+    assert reloaded.tampered is False
+
+    verify = PolicyEngine(path=policy_path)
+    assert verify.tampered is False

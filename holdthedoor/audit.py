@@ -23,10 +23,10 @@ from pathlib import Path
 
 
 def default_audit_path() -> Path:
-    override = os.environ.get("CLAUDE_WALL_AUDIT_DIR")
+    override = os.environ.get("HOLDTHEDOOR_AUDIT_DIR")
     if override:
         return Path(override) / "audit.jsonl"
-    return Path.home() / ".local" / "share" / "claude-wall" / "audit.jsonl"
+    return Path.home() / ".local" / "share" / "holdthedoor" / "audit.jsonl"
 
 
 def generate_key() -> bytes:

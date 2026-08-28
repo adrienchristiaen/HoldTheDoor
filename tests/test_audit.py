@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from claude_wall.audit import AuditLog
+from holdthedoor.audit import AuditLog
 
 
 @pytest.fixture

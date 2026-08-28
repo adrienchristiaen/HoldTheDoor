@@ -1,4 +1,4 @@
-# claude-wall
+# holdthedoor
 
 > Privacy-first security layer for AI coding CLIs. Deterministic hooks the LLM cannot bypass — secrets get redacted, sensitive files get blocked, prompts get scanned, and every tool call can be governed by rules you define.
 
@@ -33,7 +33,7 @@
 
 ## Why
 
-AI coding agents read your filesystem, run shell commands, and fetch web pages — then feed the results straight back into an LLM context. That's how secrets leak: a `cat .env` in an agent's own reasoning, a stray API key in a curl response, a credential pasted by mistake into a prompt. Prompt-based instructions ("don't read secrets") are not a security boundary — the LLM can be talked out of them. claude-wall sits **outside** the model, as CLI hooks that run in plain Python before/after every tool call. The LLM cannot see, disable, or negotiate with a hook — it either lets the call through or it doesn't.
+AI coding agents read your filesystem, run shell commands, and fetch web pages — then feed the results straight back into an LLM context. That's how secrets leak: a `cat .env` in an agent's own reasoning, a stray API key in a curl response, a credential pasted by mistake into a prompt. Prompt-based instructions ("don't read secrets") are not a security boundary — the LLM can be talked out of them. holdthedoor sits **outside** the model, as CLI hooks that run in plain Python before/after every tool call. The LLM cannot see, disable, or negotiate with a hook — it either lets the call through or it doesn't.
 
 ---
 
@@ -55,7 +55,7 @@ AI coding agents read your filesystem, run shell commands, and fetch web pages �
 | **PreToolUse / BeforeTool** | Before any file/shell tool call | Blocks calls targeting sensitive paths (`.env`, SSH keys, credentials, `*.pem`) **and** evaluates your custom [policy rules](#tool-call-policy-engine). Exit code 2 = CLI aborts the call. |
 | **UserPromptSubmit** | Every user prompt (Claude Code + Codex only) | Scans your prompt for structured secrets. Warns by default, blocks in strict mode. |
 
-Every event — redaction, block, warning, policy match — is recorded in an HMAC-chained audit log (`~/.local/share/claude-wall/audit.jsonl`). Tampering with any entry breaks the chain, and `claude-wall audit --verify` proves it.
+Every event — redaction, block, warning, policy match — is recorded in an HMAC-chained audit log (`~/.local/share/holdthedoor/audit.jsonl`). Tampering with any entry breaks the chain, and `holdthedoor audit --verify` proves it.
 
 ---
 
@@ -65,32 +65,32 @@ Sensitive-path blocking (`.env`, SSH keys, …) is built in and always on. On to
 
 ```bash
 # Block force-pushes to any branch
-claude-wall policy add --id no-force-push \
+holdthedoor policy add --id no-force-push \
   --tool Bash --match 'push.*--force' --action block \
   --reason "force push needs a human"
 
 # Warn (but don't block) writes under any node_modules-like path
-claude-wall policy add --id watch-writes \
+holdthedoor policy add --id watch-writes \
   --tool Write --match-type path_glob --match '*/node_modules/*' \
   --action warn
 
 # List active rules
-claude-wall policy list
+holdthedoor policy list
 
 # Dry-run a command against current rules — no side effects
-claude-wall policy test "git push --force origin main"
+holdthedoor policy test "git push --force origin main"
 # → block  (matched rule 'no-force-push': force push needs a human)
 
 # Remove a rule
-claude-wall policy remove no-force-push
+holdthedoor policy remove no-force-push
 ```
 
-Rules live in `~/.local/share/claude-wall/policy.json`, are evaluated in the order they were added, and the first match wins (no match → allow). Each rule is scoped to a tool (`Bash`, `Read`, `Write`, `*` for all, or `Tool1|Tool2`) and matches either:
+Rules live in `~/.local/share/holdthedoor/policy.json`, are evaluated in the order they were added, and the first match wins (no match → allow). Each rule is scoped to a tool (`Bash`, `Read`, `Write`, `*` for all, or `Tool1|Tool2`) and matches either:
 
 - `command_regex` (default) — a regex tested against the shell command (`Bash` calls)
 - `path_glob` — a glob tested against the file path (`Read`/`Write`/`Edit` calls)
 
-Every match is written to the audit log as `policy_block` or `policy_warn`, alongside the built-in events, so `claude-wall audit` shows a complete picture.
+Every match is written to the audit log as `policy_block` or `policy_warn`, alongside the built-in events, so `holdthedoor audit` shows a complete picture.
 
 This is the mechanism to reach for when the built-in checks aren't enough for your team: pin dangerous commands, restrict writes to specific paths, or require review for anything touching a directory you care about — all enforced deterministically, outside the model's control.
 
@@ -112,11 +112,11 @@ This is the mechanism to reach for when the built-in checks aren't enough for yo
 # Install pipx if not already present
 brew install pipx
 
-# Install claude-wall
-pipx install git+https://github.com/adrienchristiaen/claude-wall.git
+# Install holdthedoor
+pipx install git+https://github.com/adrienchristiaen/holdthedoor.git
 
 # Register hooks (auto-detects installed CLIs)
-claude-wall install
+holdthedoor install
 ```
 
 ### Linux
@@ -127,10 +127,10 @@ python3 -m pip install --user pipx
 python3 -m pipx ensurepath
 
 # Restart terminal, then:
-pipx install git+https://github.com/adrienchristiaen/claude-wall.git
+pipx install git+https://github.com/adrienchristiaen/holdthedoor.git
 
 # Register hooks
-claude-wall install
+holdthedoor install
 ```
 
 ### Windows (PowerShell)
@@ -141,10 +141,10 @@ pip install pipx
 pipx ensurepath
 
 # Restart terminal, then:
-pipx install git+https://github.com/adrienchristiaen/claude-wall.git
+pipx install git+https://github.com/adrienchristiaen/holdthedoor.git
 
 # Register hooks
-claude-wall install
+holdthedoor install
 ```
 
 > **Windows note:** Settings are written to `%APPDATA%\Claude\settings.json`,
@@ -153,10 +153,10 @@ claude-wall install
 ### From source (development)
 
 ```bash
-git clone https://github.com/adrienchristiaen/claude-wall.git
-cd claude-wall
+git clone https://github.com/adrienchristiaen/holdthedoor.git
+cd holdthedoor
 pipx install --editable .
-claude-wall install
+holdthedoor install
 ```
 
 ### Targeting a specific CLI
@@ -164,10 +164,10 @@ claude-wall install
 By default `install` auto-detects which CLIs are installed. To target explicitly:
 
 ```bash
-claude-wall install --cli claude   # Claude Code only
-claude-wall install --cli codex    # Codex CLI only
-claude-wall install --cli gemini   # Gemini CLI only
-claude-wall install --cli all      # all detected CLIs
+holdthedoor install --cli claude   # Claude Code only
+holdthedoor install --cli codex    # Codex CLI only
+holdthedoor install --cli gemini   # Gemini CLI only
+holdthedoor install --cli all      # all detected CLIs
 ```
 
 Same flag works for `uninstall` and `status`.
@@ -177,7 +177,7 @@ Same flag works for `uninstall` and `status`.
 ## Verify installation
 
 ```bash
-claude-wall status
+holdthedoor status
 ```
 
 Expected output:
@@ -187,7 +187,7 @@ Expected output:
   /Users/you/.claude/settings.json
   hooks: PostToolUse · PreToolUse · UserPromptSubmit
 
-SESSION  /tmp/claude-wall/<session-id>/session.db
+SESSION  /tmp/holdthedoor/<session-id>/session.db
   0 values redacted this session
 
 RECENT EVENTS
@@ -202,20 +202,20 @@ Open a new CLI session — hooks activate automatically.
 
 | Command | What it does |
 |---|---|
-| `claude-wall status [--cli auto\|claude\|codex\|gemini\|all]` | Installed hooks per CLI, session DB path, last 5 audit events. |
-| `claude-wall reveal <token>` | Print the original value behind a session token (session-scoped — dies with the session). |
-| `claude-wall audit [--verify] [--last N] [--json] [--follow]` | Print the audit log. `--verify` walks the HMAC chain. `--follow` (`-f`) tails new events live, for monitoring in a second terminal. |
-| `claude-wall policy list \| add \| remove \| test` | Manage custom rules — see [policy engine](#tool-call-policy-engine). |
-| `claude-wall uninstall [--cli ...] [--yes]` | Strips only claude-wall entries. Other hooks are untouched. |
+| `holdthedoor status [--cli auto\|claude\|codex\|gemini\|all]` | Installed hooks per CLI, session DB path, last 5 audit events. |
+| `holdthedoor reveal <token>` | Print the original value behind a session token (session-scoped — dies with the session). |
+| `holdthedoor audit [--verify] [--last N] [--json] [--follow]` | Print the audit log. `--verify` walks the HMAC chain. `--follow` (`-f`) tails new events live, for monitoring in a second terminal. |
+| `holdthedoor policy list \| add \| remove \| test` | Manage custom rules — see [policy engine](#tool-call-policy-engine). |
+| `holdthedoor uninstall [--cli ...] [--yes]` | Strips only holdthedoor entries. Other hooks are untouched. |
 
 ```
-$ claude-wall reveal '[WALL:openai_key:1]'
+$ holdthedoor reveal '[WALL:openai_key:1]'
 sk-proj-••••••••••••••••••••••••••••••••••••••
 
-$ claude-wall audit --verify
+$ holdthedoor audit --verify
   ✓ chain intact
 
-$ claude-wall audit --follow
+$ holdthedoor audit --follow
 SESSION AUDIT  —  live (Ctrl-C to stop)
 ────────────────────────────────────────────────────────────────
   16:11:02  ✗ block  pre-tool  Read  /you/project/.env  →  filename '.env' is sensitive
@@ -223,12 +223,12 @@ SESSION AUDIT  —  live (Ctrl-C to stop)
 
 ### Emergency disable
 
-Set `CLAUDE_WALL_DISABLED=1` to bypass all hooks (e.g., to write documentation containing example secret patterns):
+Set `HOLDTHEDOOR_DISABLED=1` to bypass all hooks (e.g., to write documentation containing example secret patterns):
 
 ```bash
-export CLAUDE_WALL_DISABLED=1
+export HOLDTHEDOOR_DISABLED=1
 # ... do your thing ...
-unset CLAUDE_WALL_DISABLED
+unset HOLDTHEDOOR_DISABLED
 ```
 
 ---
@@ -238,7 +238,7 @@ unset CLAUDE_WALL_DISABLED
 By default the `UserPromptSubmit` hook warns but lets the prompt through. To block:
 
 ```bash
-export CLAUDE_WALL_STRICT=1
+export HOLDTHEDOOR_STRICT=1
 ```
 
 ---
@@ -256,7 +256,7 @@ Runs in an isolated tmpdir — does not touch your real CLI config.
 ## Architecture
 
 ```
-claude_wall/
+holdthedoor/
 ├── patterns.py    # regex categories + sensitive filename/dir/suffix sets
 ├── session.py     # SQLite WAL per-session store
 ├── tokenizer.py   # value <-> [WALL:cat:N] bidirectional, idempotent
@@ -302,7 +302,7 @@ claude_wall/
 | `private_ip` | RFC 1918 ranges |
 | `internal_hostname` | `*.internal`, `*.corp`, `*.local` |
 
-Extend by adding entries to `claude_wall/patterns.py`. Extend blocking behavior for anything else — a command, a path, a whole category of writes — with the [policy engine](#tool-call-policy-engine) instead, no code change needed.
+Extend by adding entries to `holdthedoor/patterns.py`. Extend blocking behavior for anything else — a command, a path, a whole category of writes — with the [policy engine](#tool-call-policy-engine) instead, no code change needed.
 
 ---
 

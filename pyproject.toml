@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "claude-wall"
+name = "holdthedoor"
 version = "0.1.0"
-description = "Privacy-first security layer for Claude Code via 3 deterministic hooks"
+description = "Privacy-first security layer for AI coding CLIs (Claude Code, Codex, Gemini) via deterministic hooks"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{name = "Adrien Christiaen"}]
@@ -16,10 +16,11 @@ dependencies = []
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-claude-wall = "claude_wall.cli:main"
+holdthedoor = "holdthedoor.cli:main"
+hold = "holdthedoor.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["claude_wall*"]
+include = ["holdthedoor*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

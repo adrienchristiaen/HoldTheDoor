@@ -1,9 +1,9 @@
-"""claude-wall CLI entry point.
+"""holdthedoor CLI entry point.
 
 Subcommands:
 
 - install      — register the three hooks in ~/.claude/settings.json
-- uninstall    — strip claude-wall hooks (leaves user hooks intact)
+- uninstall    — strip holdthedoor hooks (leaves user hooks intact)
 - status       — show installed hooks, session dir, recent events
 - reveal TOK   — print the original value for a session token
 - audit        — print the audit log, with --verify to check the HMAC chain
@@ -96,7 +96,7 @@ def _fmt_event(e: dict) -> str:
 
 
 def _exit(msg: str, code: int = 1) -> int:
-    sys.stderr.write(f"claude-wall: {msg}\n")
+    sys.stderr.write(f"holdthedoor: {msg}\n")
     return code
 
 
@@ -131,18 +131,20 @@ def cmd_install(args: argparse.Namespace) -> int:
             print(json.dumps(report["after"], indent=2))
             continue
         if not _confirm(
-            f"register claude-wall hooks in {report['path']}?", args.yes
+            f"register holdthedoor hooks in {report['path']}?", args.yes
         ):
             return _exit("aborted")
-        S.install(cli=cli, yes=True)
+        report = S.install(cli=cli, yes=True)
         print(f"[{cli}] installed {report['added']} hooks in {report['path']}")
+        if cli == "codex" and report.get("codex_feature_flag_needed") is False:
+            print(DIM(f"  [codex] enabled codex_hooks in ~/.codex/config.toml"))
     return 0
 
 
 def cmd_uninstall(args: argparse.Namespace) -> int:
     clis = _resolve_clis(args.cli)
     for cli in clis:
-        if not _confirm(f"remove claude-wall hooks from {cli}?", args.yes):
+        if not _confirm(f"remove holdthedoor hooks from {cli}?", args.yes):
             return _exit("aborted")
         report = S.uninstall(cli=cli, yes=True)
         print(f"[{cli}] removed {report['removed']} hook command(s) from {report['path']}")
@@ -173,7 +175,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(f"  {YELLOW(str(len(toks)))} value{'s' if len(toks) != 1 else ''} redacted this session")
             for cat, orig_preview, tok in toks[:5]:
                 masked = orig_preview[:4] + "••••" if len(orig_preview) > 4 else "••••"
-                print(DIM(f"    {tok}  ({cat})  →  claude-wall reveal '{tok}'"))
+                print(DIM(f"    {tok}  ({cat})  →  holdthedoor reveal '{tok}'"))
             if len(toks) > 5:
                 print(DIM(f"    … and {len(toks)-5} more"))
         else:
@@ -299,7 +301,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
         print()
         print(DIM("  Active tokens this session:"))
         for tok in session_tokens:
-            print(DIM(f"    {tok}  →  claude-wall reveal '{tok}'"))
+            print(DIM(f"    {tok}  →  holdthedoor reveal '{tok}'"))
 
     print()
     return 0 if (not args.verify or log.verify()[0]) else 1
@@ -356,9 +358,15 @@ def cmd_policy_test(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_monitor(args: argparse.Namespace) -> int:
+    from .monitor import serve
+    serve(host=args.host, port=args.port, open_browser=args.open)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="claude-wall",
+        prog="holdthedoor",
         description="Privacy-first security layer for Claude Code",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -372,7 +380,7 @@ def build_parser() -> argparse.ArgumentParser:
                          help="target CLI: claude, codex, gemini, all, auto (default: auto-detect)")
     install.set_defaults(func=cmd_install)
 
-    uninstall = sub.add_parser("uninstall", help="remove claude-wall hooks")
+    uninstall = sub.add_parser("uninstall", help="remove holdthedoor hooks")
     uninstall.add_argument("--yes", "-y", action="store_true")
     uninstall.add_argument("--cli", default="auto", choices=cli_choices)
     uninstall.set_defaults(func=cmd_uninstall)
@@ -417,6 +425,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_test.add_argument("--tool", default="Bash")
     p_test.add_argument("--path", action="store_true", help="treat target as a path, not a command")
     p_test.set_defaults(func=cmd_policy_test)
+
+    monitor = sub.add_parser("monitor", help="serve a live audit-log UI on localhost")
+    monitor.add_argument("--host", default="127.0.0.1", help="bind address (default: 127.0.0.1, local only)")
+    monitor.add_argument("--port", type=int, default=8956)
+    monitor.add_argument("--open", action="store_true", help="open the page in a browser")
+    monitor.set_defaults(func=cmd_monitor)
 
     return p
 

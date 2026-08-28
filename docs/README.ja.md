@@ -1,4 +1,4 @@
-# claude-wall
+# holdthedoor
 
 > AI コーディング CLI 向けプライバシーファーストなセキュリティレイヤー。LLM が回避できない決定的フックで、シークレットを難読化し、機密ファイルをブロックし、プロンプトをスキャンし、さらにすべてのツール呼び出しを自分で定義したルールで統制できます。
 
@@ -33,7 +33,7 @@
 
 ## なぜ必要か
 
-AI コーディング agent はファイルシステムを読み、シェルコマンドを実行し、Web ページを取得し——その結果をそのまま LLM のコンテキストに流し込みます。シークレットはこうして漏れます。agent 自身の推論過程での `cat .env`、curl のレスポンスに紛れ込んだ API キー、誤ってプロンプトに貼り付けられた認証情報。プロンプトレベルの指示（「シークレットを読むな」）はセキュリティ境界にはなりません——LLM は説得されて回避してしまう可能性があります。claude-wall はモデルの**外側**に位置し、各ツール呼び出しの前後で動く素の Python の CLI フックとして動作します。LLM はフックを見ることも、無効化することも、交渉することもできません——呼び出しを通すか通さないかのどちらかです。
+AI コーディング agent はファイルシステムを読み、シェルコマンドを実行し、Web ページを取得し——その結果をそのまま LLM のコンテキストに流し込みます。シークレットはこうして漏れます。agent 自身の推論過程での `cat .env`、curl のレスポンスに紛れ込んだ API キー、誤ってプロンプトに貼り付けられた認証情報。プロンプトレベルの指示（「シークレットを読むな」）はセキュリティ境界にはなりません——LLM は説得されて回避してしまう可能性があります。holdthedoor はモデルの**外側**に位置し、各ツール呼び出しの前後で動く素の Python の CLI フックとして動作します。LLM はフックを見ることも、無効化することも、交渉することもできません——呼び出しを通すか通さないかのどちらかです。
 
 ---
 
@@ -55,7 +55,7 @@ AI コーディング agent はファイルシステムを読み、シェルコ�
 | **PreToolUse / BeforeTool** | ファイル/シェルツール呼び出し前 | 機密パス（`.env`、SSH キー、認証情報、`*.pem`）へのアクセスをブロックし、**さらに**独自の[ポリシールール](#ツール呼び出しポリシーエンジン)を評価します。終了コード 2 = CLI がキャンセル。 |
 | **UserPromptSubmit** | ユーザー入力ごと（Claude Code + Codex のみ） | 構造化シークレットをスキャン。デフォルトは警告のみ、厳格モードではブロック。 |
 
-すべてのイベント——難読化、ブロック、警告、ポリシーマッチ——は HMAC チェーン型の監査ログ（`~/.local/share/claude-wall/audit.jsonl`）に記録されます。改ざんするとチェーンが壊れ、`claude-wall audit --verify` でそれを証明できます。
+すべてのイベント——難読化、ブロック、警告、ポリシーマッチ——は HMAC チェーン型の監査ログ（`~/.local/share/holdthedoor/audit.jsonl`）に記録されます。改ざんするとチェーンが壊れ、`holdthedoor audit --verify` でそれを証明できます。
 
 ---
 
@@ -65,32 +65,32 @@ AI コーディング agent はファイルシステムを読み、シェルコ�
 
 ```bash
 # 任意のブランチへの force-push をブロック
-claude-wall policy add --id no-force-push \
+holdthedoor policy add --id no-force-push \
   --tool Bash --match 'push.*--force' --action block \
   --reason "force push には人によるレビューが必要"
 
 # node_modules 的なパスへの書き込みは警告のみ（ブロックしない）
-claude-wall policy add --id watch-writes \
+holdthedoor policy add --id watch-writes \
   --tool Write --match-type path_glob --match '*/node_modules/*' \
   --action warn
 
 # 有効なルールを一覧表示
-claude-wall policy list
+holdthedoor policy list
 
 # 現在のルールに対してコマンドをドライラン——副作用なし
-claude-wall policy test "git push --force origin main"
+holdthedoor policy test "git push --force origin main"
 # → block  (matched rule 'no-force-push': force push には人によるレビューが必要)
 
 # ルールを削除
-claude-wall policy remove no-force-push
+holdthedoor policy remove no-force-push
 ```
 
-ルールは `~/.local/share/claude-wall/policy.json` に保存され、追加された順に評価され、最初にマッチしたものが適用されます（マッチなし → allow）。各ルールは対象ツール（`Bash`、`Read`、`Write`、全ツール対象の `*`、または `Tool1|Tool2`）にスコープされ、以下いずれかの方式でマッチします：
+ルールは `~/.local/share/holdthedoor/policy.json` に保存され、追加された順に評価され、最初にマッチしたものが適用されます（マッチなし → allow）。各ルールは対象ツール（`Bash`、`Read`、`Write`、全ツール対象の `*`、または `Tool1|Tool2`）にスコープされ、以下いずれかの方式でマッチします：
 
 - `command_regex`（デフォルト）— シェルコマンドに対する正規表現（`Bash` 呼び出し）
 - `path_glob` — ファイルパスに対する glob パターン（`Read`/`Write`/`Edit` 呼び出し）
 
-マッチはすべて `policy_block` または `policy_warn` として監査ログに記録され、組み込みイベントと並んで表示されます——`claude-wall audit` で全体像を把握できます。
+マッチはすべて `policy_block` または `policy_warn` として監査ログに記録され、組み込みイベントと並んで表示されます——`holdthedoor audit` で全体像を把握できます。
 
 組み込みのチェックだけではチームにとって不十分な場合に使う仕組みです。危険なコマンドを封じる、特定パスへの書き込みを制限する、注意すべきディレクトリに触れる操作にレビューを義務付ける——すべてモデルの制御が及ばないところで、決定的に強制されます。
 
@@ -112,11 +112,11 @@ claude-wall policy remove no-force-push
 # pipx のインストール（未インストールの場合）
 brew install pipx
 
-# claude-wall のインストール
-pipx install git+https://github.com/adrienchristiaen/claude-wall.git
+# holdthedoor のインストール
+pipx install git+https://github.com/adrienchristiaen/holdthedoor.git
 
 # フックの登録（インストール済み CLI を自動検出）
-claude-wall install
+holdthedoor install
 ```
 
 ### Linux
@@ -127,10 +127,10 @@ python3 -m pip install --user pipx
 python3 -m pipx ensurepath
 
 # ターミナルを再起動してから：
-pipx install git+https://github.com/adrienchristiaen/claude-wall.git
+pipx install git+https://github.com/adrienchristiaen/holdthedoor.git
 
 # フックの登録
-claude-wall install
+holdthedoor install
 ```
 
 ### Windows（PowerShell）
@@ -141,10 +141,10 @@ pip install pipx
 pipx ensurepath
 
 # ターミナルを再起動してから：
-pipx install git+https://github.com/adrienchristiaen/claude-wall.git
+pipx install git+https://github.com/adrienchristiaen/holdthedoor.git
 
 # フックの登録
-claude-wall install
+holdthedoor install
 ```
 
 > **Windows の注意：** 設定ファイルはそれぞれ `%APPDATA%\Claude\settings.json`、
@@ -153,10 +153,10 @@ claude-wall install
 ### ソースからインストール（開発用）
 
 ```bash
-git clone https://github.com/adrienchristiaen/claude-wall.git
-cd claude-wall
+git clone https://github.com/adrienchristiaen/holdthedoor.git
+cd holdthedoor
 pipx install --editable .
-claude-wall install
+holdthedoor install
 ```
 
 ### 対象 CLI の指定
@@ -164,10 +164,10 @@ claude-wall install
 デフォルトでは `install` がインストール済みの CLI を自動検出します。明示的に指定する場合：
 
 ```bash
-claude-wall install --cli claude   # Claude Code のみ
-claude-wall install --cli codex    # Codex CLI のみ
-claude-wall install --cli gemini   # Gemini CLI のみ
-claude-wall install --cli all      # 検出された全 CLI
+holdthedoor install --cli claude   # Claude Code のみ
+holdthedoor install --cli codex    # Codex CLI のみ
+holdthedoor install --cli gemini   # Gemini CLI のみ
+holdthedoor install --cli all      # 検出された全 CLI
 ```
 
 `uninstall` と `status` も同じ `--cli` フラグに対応しています。
@@ -177,7 +177,7 @@ claude-wall install --cli all      # 検出された全 CLI
 ## インストールの確認
 
 ```bash
-claude-wall status
+holdthedoor status
 ```
 
 期待される出力：
@@ -187,7 +187,7 @@ claude-wall status
   /Users/you/.claude/settings.json
   hooks: PostToolUse · PreToolUse · UserPromptSubmit
 
-SESSION  /tmp/claude-wall/<session-id>/session.db
+SESSION  /tmp/holdthedoor/<session-id>/session.db
   0 values redacted this session
 
 RECENT EVENTS
@@ -202,20 +202,20 @@ RECENT EVENTS
 
 | コマンド | 内容 |
 |---|---|
-| `claude-wall status [--cli auto\|claude\|codex\|gemini\|all]` | 各 CLI のフック状態、セッション DB パス、直近5件の監査イベント。 |
-| `claude-wall reveal <token>` | セッショントークンの元の値を返します（セッション内限定——セッション終了とともに消えます）。 |
-| `claude-wall audit [--verify] [--last N] [--json] [--follow]` | 監査ログを表示します。`--verify` で HMAC チェーンの整合性を検証。`--follow`（`-f`）で新しいイベントをリアルタイムに追跡し、別ターミナルでの監視に使えます。 |
-| `claude-wall policy list \| add \| remove \| test` | カスタムルールを管理——[ポリシーエンジン](#ツール呼び出しポリシーエンジン)参照。 |
-| `claude-wall uninstall [--cli ...] [--yes]` | claude-wall のエントリのみ削除します。他のフックはそのまま保持されます。 |
+| `holdthedoor status [--cli auto\|claude\|codex\|gemini\|all]` | 各 CLI のフック状態、セッション DB パス、直近5件の監査イベント。 |
+| `holdthedoor reveal <token>` | セッショントークンの元の値を返します（セッション内限定——セッション終了とともに消えます）。 |
+| `holdthedoor audit [--verify] [--last N] [--json] [--follow]` | 監査ログを表示します。`--verify` で HMAC チェーンの整合性を検証。`--follow`（`-f`）で新しいイベントをリアルタイムに追跡し、別ターミナルでの監視に使えます。 |
+| `holdthedoor policy list \| add \| remove \| test` | カスタムルールを管理——[ポリシーエンジン](#ツール呼び出しポリシーエンジン)参照。 |
+| `holdthedoor uninstall [--cli ...] [--yes]` | holdthedoor のエントリのみ削除します。他のフックはそのまま保持されます。 |
 
 ```
-$ claude-wall reveal '[WALL:openai_key:1]'
+$ holdthedoor reveal '[WALL:openai_key:1]'
 sk-proj-••••••••••••••••••••••••••••••••••••••
 
-$ claude-wall audit --verify
+$ holdthedoor audit --verify
   ✓ chain intact
 
-$ claude-wall audit --follow
+$ holdthedoor audit --follow
 SESSION AUDIT  —  live (Ctrl-C to stop)
 ────────────────────────────────────────────────────────────────
   16:11:02  ✗ block  pre-tool  Read  /you/project/.env  →  filename '.env' is sensitive
@@ -224,9 +224,9 @@ SESSION AUDIT  —  live (Ctrl-C to stop)
 ### 緊急無効化
 
 ```bash
-export CLAUDE_WALL_DISABLED=1
+export HOLDTHEDOOR_DISABLED=1
 # ... シークレットパターン例を含むドキュメント編集などの操作 ...
-unset CLAUDE_WALL_DISABLED
+unset HOLDTHEDOOR_DISABLED
 ```
 
 ---
@@ -236,7 +236,7 @@ unset CLAUDE_WALL_DISABLED
 デフォルトでは `UserPromptSubmit` フックは警告のみでプロンプトを通過させます。ブロックするには：
 
 ```bash
-export CLAUDE_WALL_STRICT=1
+export HOLDTHEDOOR_STRICT=1
 ```
 
 ---
@@ -254,7 +254,7 @@ bash scripts/demo.sh
 ## アーキテクチャ
 
 ```
-claude_wall/
+holdthedoor/
 ├── patterns.py    # 正規表現カテゴリ + 機密ファイル名/ディレクトリ/拡張子セット
 ├── session.py     # セッションごとの SQLite WAL ストア
 ├── tokenizer.py   # 値 <-> [WALL:cat:N] の双方向・冪等変換
@@ -300,7 +300,7 @@ claude_wall/
 | `private_ip` | RFC 1918 アドレス範囲 |
 | `internal_hostname` | `*.internal`、`*.corp`、`*.local` |
 
-`claude_wall/patterns.py` にエントリを追加することでカスタムカテゴリを追加できます。それ以外——特定のコマンド、パス、書き込み操作全体——をブロックしたい場合は、コードを変更せずに[ポリシーエンジン](#ツール呼び出しポリシーエンジン)を使ってください。
+`holdthedoor/patterns.py` にエントリを追加することでカスタムカテゴリを追加できます。それ以外——特定のコマンド、パス、書き込み操作全体——をブロックしたい場合は、コードを変更せずに[ポリシーエンジン](#ツール呼び出しポリシーエンジン)を使ってください。
 
 ---
 

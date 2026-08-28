@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from claude_wall import patterns
+from holdthedoor import patterns
 
 
 class TestSecretPatterns:

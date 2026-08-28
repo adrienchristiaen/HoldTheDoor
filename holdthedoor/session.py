@@ -1,8 +1,8 @@
 """SQLite-backed session store.
 
 One database per Claude Code session, lives under
-`$CLAUDE_WALL_SESSION_ROOT/<session_id>/session.db` (default root:
-`/tmp/claude-wall`). Stores reversible redaction tokens, per-category
+`$HOLDTHEDOOR_SESSION_ROOT/<session_id>/session.db` (default root:
+`/tmp/holdthedoor`). Stores reversible redaction tokens, per-category
 counters, and meta (audit HMAC key, workspace scan cache).
 """
 
@@ -44,7 +44,7 @@ def resolve_session_id() -> str:
 
 def session_root() -> Path:
     """Root directory holding per-session DBs."""
-    return Path(os.environ.get("CLAUDE_WALL_SESSION_ROOT") or "/tmp/claude-wall")
+    return Path(os.environ.get("HOLDTHEDOOR_SESSION_ROOT") or "/tmp/holdthedoor")
 
 
 def session_db_path(session_id: str | None = None) -> Path:
