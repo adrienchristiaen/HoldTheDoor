@@ -20,6 +20,7 @@ from pathlib import Path
 
 from . import settings as S
 from .audit import AuditLog, generate_key
+from .policy import Rule, PolicyEngine, VALID_ACTIONS, VALID_MATCH_TYPES
 from .session import SessionStore, session_db_path, session_root
 from .settings import SUPPORTED_CLIS, detect_cli
 
@@ -40,8 +41,10 @@ CYAN   = lambda t: _c("36", t)
 
 _EVENT_ICON = {
     "block": RED("✗"),
+    "policy_block": RED("✗"),
     "redact": YELLOW("⚙"),
     "warn": YELLOW("⚠"),
+    "policy_warn": YELLOW("⚠"),
     "allow": GREEN("✓"),
 }
 _HOOK_SHORT = {
@@ -77,9 +80,12 @@ def _fmt_event(e: dict) -> str:
     target  = e.get("target", "")
 
     # detail line
-    if event == "block":
+    if event in ("block", "policy_block"):
         target_str = f"  {DIM(target)}" if target else ""
         detail = f"{BOLD(tool)}{target_str}  →  {reason or 'blocked'}"
+    elif event == "policy_warn":
+        target_str = f"  {DIM(target)}" if target else ""
+        detail = f"{BOLD(tool)}{target_str}  →  {reason or 'policy warning'}"
     elif event in ("redact", "warn") and cats:
         tokens = ", ".join(f"[WALL:{c}:*]" for c in cats[:3])
         detail = f"{BOLD(tool)}  →  {count}× {', '.join(cats)}  ({tokens})"
@@ -211,7 +217,29 @@ def cmd_reveal(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_audit_follow(args: argparse.Namespace) -> int:
+    log = _open_log()
+    print(BOLD("SESSION AUDIT") + DIM("  —  live (Ctrl-C to stop)"))
+    print("─" * 64)
+    seen = len(log.read_all())
+    try:
+        while True:
+            entries = log.read_all()
+            for e in entries[seen:]:
+                if args.json:
+                    print(json.dumps(e))
+                else:
+                    print(_fmt_event(e))
+            seen = len(entries)
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        print()
+        return 0
+
+
 def cmd_audit(args: argparse.Namespace) -> int:
+    if args.follow:
+        return cmd_audit_follow(args)
     log = _open_log()
     entries = log.read_last(args.last) if args.last else log.read_all()
 
@@ -277,6 +305,57 @@ def cmd_audit(args: argparse.Namespace) -> int:
     return 0 if (not args.verify or log.verify()[0]) else 1
 
 
+def cmd_policy_list(args: argparse.Namespace) -> int:
+    rules = PolicyEngine().list_rules()
+    if not rules:
+        print(DIM("  (no custom rules — WorkspaceGuard built-ins still apply)"))
+        return 0
+    print(BOLD(f"POLICY RULES") + DIM(f"  —  {len(rules)}"))
+    print("─" * 64)
+    for r in rules:
+        action_color = RED if r.action == "block" else (YELLOW if r.action == "warn" else GREEN)
+        print(f"  {BOLD(r.id)}  [{r.tool}]  {r.match_type}={r.pattern!r}  → {action_color(r.action)}"
+              + (f"  ({r.reason})" if r.reason else ""))
+    return 0
+
+
+def cmd_policy_add(args: argparse.Namespace) -> int:
+    engine = PolicyEngine()
+    if any(r.id == args.id for r in engine.list_rules()):
+        return _exit(f"rule id {args.id!r} already exists")
+    try:
+        rule = Rule(
+            id=args.id, tool=args.tool, match_type=args.match_type,
+            pattern=args.pattern, action=args.action, reason=args.reason,
+        )
+    except ValueError as exc:
+        return _exit(str(exc))
+    engine.add(rule)
+    print(f"added rule {rule.id!r} → {rule.action} on [{rule.tool}] {rule.match_type}={rule.pattern!r}")
+    return 0
+
+
+def cmd_policy_remove(args: argparse.Namespace) -> int:
+    if PolicyEngine().remove(args.id):
+        print(f"removed rule {args.id!r}")
+        return 0
+    return _exit(f"rule id {args.id!r} not found")
+
+
+def cmd_policy_test(args: argparse.Namespace) -> int:
+    engine = PolicyEngine()
+    if args.path:
+        action, rule = engine.evaluate(args.tool, path_str=args.target)
+    else:
+        action, rule = engine.evaluate(args.tool, command=args.target)
+    color = RED if action == "block" else (YELLOW if action == "warn" else GREEN)
+    if rule:
+        print(f"{color(action)}  (matched rule {rule.id!r}: {rule.reason or rule.pattern})")
+    else:
+        print(f"{color(action)}  (no rule matched)")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="claude-wall",
@@ -310,7 +389,34 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--verify", action="store_true", help="verify HMAC chain")
     audit.add_argument("--last", type=int, default=0, help="show only last N entries")
     audit.add_argument("--json", action="store_true", help="raw JSONL output")
+    audit.add_argument("--follow", "-f", action="store_true", help="watch for new events live")
     audit.set_defaults(func=cmd_audit)
+
+    policy = sub.add_parser("policy", help="manage custom tool-call policy rules")
+    policy_sub = policy.add_subparsers(dest="policy_cmd", required=True)
+
+    p_list = policy_sub.add_parser("list", help="list active rules")
+    p_list.set_defaults(func=cmd_policy_list)
+
+    p_add = policy_sub.add_parser("add", help="add a rule")
+    p_add.add_argument("--id", required=True)
+    p_add.add_argument("--tool", default="*", help="'*' or 'Bash'/'Read'/... ('|'-separated)")
+    p_add.add_argument("--match", required=True, dest="pattern",
+                        help="regex (command_regex) or glob (path_glob)")
+    p_add.add_argument("--match-type", default="command_regex", choices=sorted(VALID_MATCH_TYPES))
+    p_add.add_argument("--action", required=True, choices=sorted(VALID_ACTIONS))
+    p_add.add_argument("--reason", default="")
+    p_add.set_defaults(func=cmd_policy_add)
+
+    p_rm = policy_sub.add_parser("remove", help="remove a rule by id")
+    p_rm.add_argument("id")
+    p_rm.set_defaults(func=cmd_policy_remove)
+
+    p_test = policy_sub.add_parser("test", help="dry-run a command/path against current rules")
+    p_test.add_argument("target")
+    p_test.add_argument("--tool", default="Bash")
+    p_test.add_argument("--path", action="store_true", help="treat target as a path, not a command")
+    p_test.set_defaults(func=cmd_policy_test)
 
     return p
 

@@ -6,6 +6,7 @@ import os
 import sys
 from typing import Any
 
+from ..policy import PolicyEngine
 from ..workspace import WorkspaceGuard
 from ._common import block, normalize_tool, open_session_and_audit, read_event
 
@@ -38,38 +39,42 @@ def main() -> int:
     try:
         guard = WorkspaceGuard()
         guard.scan()
-        if tool == "Bash":
-            cmd = _extract_command(event)
-            if cmd:
-                blocked, reason = guard.check_bash(cmd)
-                if blocked:
-                    audit.append(
-                        hook="pre_tool_use",
-                        event="block",
-                        tool=tool,
-                        categories=[],
-                        count=0,
-                        reason=reason,
-                        target=cmd[:120],
-                        cli=cli,
-                    )
-                    block(f"bash command blocked: {reason}")
-        else:
-            path = _extract_path(event)
-            if path:
-                blocked, reason = guard.check_path(path)
-                if blocked:
-                    audit.append(
-                        hook="pre_tool_use",
-                        event="block",
-                        tool=tool,
-                        categories=[],
-                        count=0,
-                        reason=reason,
-                        target=path,
-                        cli=cli,
-                    )
-                    block(f"path {path!r} blocked: {reason}")
+        policy = PolicyEngine()
+        cmd = _extract_command(event) if tool == "Bash" else None
+        path = _extract_path(event) if tool != "Bash" else None
+
+        if cmd:
+            blocked, reason = guard.check_bash(cmd)
+            if blocked:
+                audit.append(
+                    hook="pre_tool_use", event="block", tool=tool, categories=[],
+                    count=0, reason=reason, target=cmd[:120], cli=cli,
+                )
+                block(f"bash command blocked: {reason}")
+        elif path:
+            blocked, reason = guard.check_path(path)
+            if blocked:
+                audit.append(
+                    hook="pre_tool_use", event="block", tool=tool, categories=[],
+                    count=0, reason=reason, target=path, cli=cli,
+                )
+                block(f"path {path!r} blocked: {reason}")
+
+        target = cmd or path
+        if target:
+            action, rule = policy.evaluate(tool, command=cmd, path_str=path)
+            if action == "block":
+                audit.append(
+                    hook="pre_tool_use", event="policy_block", tool=tool, categories=[],
+                    count=0, reason=rule.reason or rule.pattern, target=target[:120], cli=cli,
+                )
+                block(f"blocked by policy rule '{rule.id}': {rule.reason or rule.pattern}")
+            elif action == "warn":
+                audit.append(
+                    hook="pre_tool_use", event="policy_warn", tool=tool, categories=[],
+                    count=0, reason=rule.reason or rule.pattern, target=target[:120], cli=cli,
+                )
+                sys.stderr.write(f"claude-wall: policy warning ({rule.id}): {rule.reason or rule.pattern}\n")
         return 0
     finally:
         session.close()
