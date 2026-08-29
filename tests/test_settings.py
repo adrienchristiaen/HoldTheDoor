@@ -163,6 +163,66 @@ class TestCodexAdapter:
         assert not config_toml.exists()
 
 
+@pytest.fixture
+def opencode_plugin_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    plugin_path = tmp_path / "plugin" / "holdthedoor.js"
+    monkeypatch.setenv("HOLDTHEDOOR_OPENCODE_PLUGIN_PATH", str(plugin_path))
+    return plugin_path
+
+
+class TestOpenCodeAdapter:
+    def test_install_writes_plugin_file(self, opencode_plugin_path: Path):
+        report = S.install(cli="opencode", yes=True)
+        assert opencode_plugin_path.exists()
+        text = opencode_plugin_path.read_text()
+        assert "holdthedoor-managed-plugin" in text
+        assert "tool.execute.before" in text
+        assert "tool.execute.after" in text
+        assert report["added"] == 2
+
+    def test_dry_run_does_not_write(self, opencode_plugin_path: Path):
+        report = S.install(cli="opencode", dry_run=True, yes=True)
+        assert not opencode_plugin_path.exists()
+        assert report["dry_run"] is True
+
+    def test_install_idempotent(self, opencode_plugin_path: Path):
+        S.install(cli="opencode", yes=True)
+        first = opencode_plugin_path.read_text()
+        S.install(cli="opencode", yes=True)
+        second = opencode_plugin_path.read_text()
+        assert first == second
+
+    def test_install_refuses_to_clobber_foreign_file(self, opencode_plugin_path: Path):
+        opencode_plugin_path.parent.mkdir(parents=True, exist_ok=True)
+        opencode_plugin_path.write_text("// some unrelated user plugin\nexport default {}\n")
+        with pytest.raises(RuntimeError):
+            S.install(cli="opencode", yes=True)
+
+    def test_uninstall_removes_our_file(self, opencode_plugin_path: Path):
+        S.install(cli="opencode", yes=True)
+        report = S.uninstall(cli="opencode", yes=True)
+        assert not opencode_plugin_path.exists()
+        assert report["removed"] == 2
+
+    def test_uninstall_leaves_foreign_file_alone(self, opencode_plugin_path: Path):
+        opencode_plugin_path.parent.mkdir(parents=True, exist_ok=True)
+        opencode_plugin_path.write_text("// some unrelated user plugin\n")
+        report = S.uninstall(cli="opencode", yes=True)
+        assert opencode_plugin_path.exists()
+        assert report["removed"] == 0
+
+    def test_status_reports_installed(self, opencode_plugin_path: Path):
+        S.install(cli="opencode", yes=True)
+        st = S.status(cli="opencode")
+        assert st["installed"] is True
+        assert "tool.execute.before" in st["hooks"]
+
+    def test_status_reports_not_installed(self, opencode_plugin_path: Path):
+        st = S.status(cli="opencode")
+        assert st["installed"] is False
+        assert st["hooks"] == []
+
+
 class TestStatus:
     def test_reports_installed(self, settings_path: Path):
         S.install(yes=True)

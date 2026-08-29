@@ -30,6 +30,10 @@ TOOL_ALIASES: dict[str, str] = {
     "bash": "Bash",
     "read": "Read",
     "apply_patch": "Edit",
+    # OpenCode aliases (bash/read shared with Codex above)
+    "write": "Write",
+    "edit": "Edit",
+    "webfetch": "WebFetch",
 }
 
 
