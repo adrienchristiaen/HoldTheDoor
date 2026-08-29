@@ -11,13 +11,14 @@ attacker without the key cannot forge or repair the chain.
 
 from __future__ import annotations
 
+import csv
 import hmac
 import json
 import os
 import secrets
 import time
 from dataclasses import dataclass, field
-from datetime import timezone
+from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
@@ -121,6 +122,61 @@ class AuditLog:
     def read_last(self, n: int) -> list[dict]:
         all_entries = self.read_all()
         return all_entries[-n:] if n > 0 else []
+
+    def export_csv(
+        self,
+        out_path: Path,
+        *,
+        since: float | None = None,
+        until: float | None = None,
+    ) -> int:
+        """Write a compliance-friendly CSV export of the audit log.
+
+        Returns the number of rows written. The first line is a `#`-prefixed
+        metadata comment recording chain-verification status at export time,
+        so an auditor can see integrity was checked without needing the
+        (never-exported) HMAC key.
+        """
+        ok, verify_msg = self.verify()
+        entries = self.read_all()
+        if since is not None:
+            entries = [e for e in entries if e.get("ts", 0) >= since]
+        if until is not None:
+            entries = [e for e in entries if e.get("ts", 0) <= until]
+
+        generated = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        meta = (
+            f"# holdthedoor audit export | "
+            f"chain_verified={'true' if ok else 'false'}"
+            + (f" ({verify_msg})" if verify_msg else "")
+            + f" | events={len(entries)} | generated={generated}"
+        )
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with out_path.open("w", encoding="utf-8", newline="") as f:
+            f.write(meta + "\n")
+            writer = csv.writer(f)
+            writer.writerow([
+                "ts", "session", "cli", "hook", "event", "tool",
+                "categories", "count", "reason", "target",
+            ])
+            for e in entries:
+                ts_iso = datetime.fromtimestamp(
+                    e.get("ts", 0), tz=timezone.utc
+                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                writer.writerow([
+                    ts_iso,
+                    e.get("session", ""),
+                    e.get("cli", ""),
+                    e.get("hook", ""),
+                    e.get("event", ""),
+                    e.get("tool", "") or "",
+                    ";".join(e.get("categories", []) or []),
+                    e.get("count", 0),
+                    e.get("reason", "") or "",
+                    e.get("target", "") or "",
+                ])
+        return len(entries)
 
     def verify(self) -> tuple[bool, str | None]:
         prev = ""

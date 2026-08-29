@@ -77,3 +77,45 @@ class TestHmacChain:
         log.path.write_text("\n".join(lines) + "\n")
         ok, _ = log.verify()
         assert ok is False
+
+
+class TestExportCsv:
+    def test_export_writes_metadata_and_rows(self, log: AuditLog, tmp_path: Path):
+        log.append(hook="pre_tool_use", event="block", tool="Bash", categories=[],
+                    count=0, reason="sensitive", target="cat .env")
+        log.append(hook="post_tool_use", event="redact", tool="Read", categories=["email"], count=2)
+        out = tmp_path / "export.csv"
+        n = log.export_csv(out)
+        assert n == 2
+        text = out.read_text()
+        lines = text.splitlines()
+        assert lines[0].startswith("# holdthedoor audit export")
+        assert "chain_verified=true" in lines[0]
+        assert "events=2" in lines[0]
+        assert lines[1] == "ts,session,cli,hook,event,tool,categories,count,reason,target"
+        assert len(lines) == 4
+        assert "cat .env" in lines[2]
+        assert "email" in lines[3]
+
+    def test_export_reports_broken_chain(self, log: AuditLog, tmp_path: Path):
+        log.append(hook="post_tool_use", event="redact", tool="Bash", categories=[], count=0)
+        raw = json.loads(log.path.read_text())
+        raw["count"] = 999
+        log.path.write_text(json.dumps(raw) + "\n")
+        out = tmp_path / "export.csv"
+        log.export_csv(out)
+        first_line = out.read_text().splitlines()[0]
+        assert "chain_verified=false" in first_line
+
+    def test_export_filters_by_date_range(self, log: AuditLog, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        import time as time_mod
+        times = iter([1000.0, 2000.0, 3000.0])
+        monkeypatch.setattr(time_mod, "time", lambda: next(times))
+        log.append(hook="post_tool_use", event="redact", tool="Bash", categories=[], count=0)
+        log.append(hook="post_tool_use", event="redact", tool="Bash", categories=[], count=1)
+        log.append(hook="post_tool_use", event="redact", tool="Bash", categories=[], count=2)
+        out = tmp_path / "export.csv"
+        n = log.export_csv(out, since=1500.0, until=2500.0)
+        assert n == 1
+        text = out.read_text()
+        assert "events=1" in text.splitlines()[0]

@@ -307,6 +307,30 @@ def cmd_audit(args: argparse.Namespace) -> int:
     return 0 if (not args.verify or log.verify()[0]) else 1
 
 
+def _parse_date_bound(s: str | None, *, end_of_day: bool) -> float | None:
+    if not s:
+        return None
+    dt = datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    if end_of_day:
+        dt = dt.replace(hour=23, minute=59, second=59)
+    return dt.timestamp()
+
+
+def cmd_audit_export(args: argparse.Namespace) -> int:
+    log = _open_log()
+    since = _parse_date_bound(args.since, end_of_day=False)
+    until = _parse_date_bound(args.until, end_of_day=True)
+    out_path = Path(args.out) if args.out else Path(
+        f"holdthedoor-audit-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
+    )
+    n = log.export_csv(out_path, since=since, until=until)
+    ok, msg = log.verify()
+    status = GREEN("✓ chain intact") if ok else RED(f"✗ chain BROKEN: {msg}")
+    print(f"exported {n} event{'s' if n != 1 else ''} → {out_path}")
+    print(f"  {status}")
+    return 0
+
+
 def cmd_policy_list(args: argparse.Namespace) -> int:
     rules = PolicyEngine().list_rules()
     if not rules:
@@ -398,6 +422,14 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--last", type=int, default=0, help="show only last N entries")
     audit.add_argument("--json", action="store_true", help="raw JSONL output")
     audit.add_argument("--follow", "-f", action="store_true", help="watch for new events live")
+    audit_sub = audit.add_subparsers(dest="audit_cmd")
+
+    audit_export = audit_sub.add_parser("export", help="export audit log as CSV for compliance/audit review")
+    audit_export.add_argument("--since", help="YYYY-MM-DD, inclusive")
+    audit_export.add_argument("--until", help="YYYY-MM-DD, inclusive")
+    audit_export.add_argument("--out", help="output path (default: holdthedoor-audit-<timestamp>.csv)")
+    audit_export.set_defaults(func=cmd_audit_export)
+
     audit.set_defaults(func=cmd_audit)
 
     policy = sub.add_parser("policy", help="manage custom tool-call policy rules")
