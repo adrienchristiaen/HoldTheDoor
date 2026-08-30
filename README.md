@@ -1,10 +1,19 @@
 # holdthedoor
 
+```
+    __          __    ____  __             __
+   / /_  ____  / /___/ / /_/ /_  ___  ____/ /___  ____  _____
+  / __ \/ __ \/ / __  / __/ __ \/ _ \/ __  / __ \/ __ \/ ___/
+ / / / / /_/ / / /_/ / /_/ / / /  __/ /_/ / /_/ / /_/ / /
+/_/ /_/\____/_/\__,_/\__/_/ /_/\___/\__,_/\____/\____/_/
+```
+
 > Privacy-first security layer for AI coding CLIs. Deterministic hooks the LLM cannot bypass — secrets get redacted, sensitive files get blocked, prompts get scanned, and every tool call can be governed by rules you define.
 
-[![tests](https://img.shields.io/badge/tests-96%20passed-brightgreen)](#testing)
+[![tests](https://img.shields.io/badge/tests-122%20passed-brightgreen)](#testing)
 [![python](https://img.shields.io/badge/python-3.11+-blue)](#requirements)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![CLIs](https://img.shields.io/badge/CLIs-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Gemini%20%C2%B7%20OpenCode-blueviolet)](#supported-clis)
 
 **Read in:** [Français](docs/README.fr.md) · [中文](docs/README.zh.md) · [日本語](docs/README.ja.md)
 
@@ -20,13 +29,15 @@
 - [Installation](#installation)
 - [Verify installation](#verify-installation)
 - [Usage](#usage)
+- [Live monitor](#live-monitor)
 - [Strict mode](#strict-mode)
 - [End-to-end demo](#end-to-end-demo)
 - [Architecture](#architecture)
 - [Detected secret categories](#detected-secret-categories)
+- [Compliance export](#compliance-export)
 - [Testing](#testing)
 - [Threat model](#threat-model)
-- [Roadmap](#roadmap-v02)
+- [Roadmap](#roadmap)
 - [License](#license)
 
 ---
@@ -44,6 +55,7 @@ AI coding agents read your filesystem, run shell commands, and fetch web pages �
 | **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** | Full (3 hooks) | `PostToolUse`, `PreToolUse`, `UserPromptSubmit` |
 | **[OpenAI Codex CLI](https://openai.com/codex)** | Full (3 hooks) | Same hook format as Claude Code |
 | **[Gemini CLI](https://gemini.google.com/cli)** | Partial (2 hooks) | `BeforeTool`, `AfterTool` — no prompt hook |
+| **[OpenCode](https://opencode.ai)** | Partial (2 hooks) | JS plugin bridging `tool.execute.before` / `tool.execute.after` to the same Python hooks — no prompt hook |
 
 ---
 
@@ -51,8 +63,8 @@ AI coding agents read your filesystem, run shell commands, and fetch web pages �
 
 | Hook | Trigger | Action |
 |---|---|---|
-| **PostToolUse / AfterTool** | After `Bash` / `Read` / `WebFetch` (or CLI equivalents) | Replaces detected secrets in tool output with reversible session tokens like `[WALL:openai_key:1]` before the LLM sees them. |
-| **PreToolUse / BeforeTool** | Before any file/shell tool call | Blocks calls targeting sensitive paths (`.env`, SSH keys, credentials, `*.pem`) **and** evaluates your custom [policy rules](#tool-call-policy-engine). Exit code 2 = CLI aborts the call. |
+| **PostToolUse / AfterTool / tool.execute.after** | After `Bash` / `Read` / `WebFetch` (or CLI equivalents) | Replaces detected secrets in tool output with reversible session tokens like `[WALL:openai_key:1]` before the LLM sees them. |
+| **PreToolUse / BeforeTool / tool.execute.before** | Before any file/shell tool call | Blocks calls targeting sensitive paths (`.env`, SSH keys, credentials, `*.pem`) **and** evaluates your custom [policy rules](#tool-call-policy-engine). Exit code 2 (or a thrown error for OpenCode) = CLI aborts the call. |
 | **UserPromptSubmit** | Every user prompt (Claude Code + Codex only) | Scans your prompt for structured secrets. Warns by default, blocks in strict mode. |
 
 Every event — redaction, block, warning, policy match — is recorded in an HMAC-chained audit log (`~/.local/share/holdthedoor/audit.jsonl`). Tampering with any entry breaks the chain, and `holdthedoor audit --verify` proves it.
@@ -99,7 +111,7 @@ This is the mechanism to reach for when the built-in checks aren't enough for yo
 ## Requirements
 
 - Python 3.11+
-- One of: Claude Code CLI, OpenAI Codex CLI, Gemini CLI
+- One of: Claude Code CLI, OpenAI Codex CLI, Gemini CLI, OpenCode
 - Zero external Python dependencies — stdlib only (`sqlite3`, `hmac`, `re`, `json`)
 
 ---
@@ -164,13 +176,14 @@ holdthedoor install
 By default `install` auto-detects which CLIs are installed. To target explicitly:
 
 ```bash
-holdthedoor install --cli claude   # Claude Code only
-holdthedoor install --cli codex    # Codex CLI only
-holdthedoor install --cli gemini   # Gemini CLI only
-holdthedoor install --cli all      # all detected CLIs
+holdthedoor install --cli claude     # Claude Code only
+holdthedoor install --cli codex      # Codex CLI only
+holdthedoor install --cli gemini     # Gemini CLI only
+holdthedoor install --cli opencode   # OpenCode only (writes a JS plugin, not a JSON hook)
+holdthedoor install --cli all        # all detected CLIs
 ```
 
-Same flag works for `uninstall` and `status`.
+Same flag works for `uninstall` and `status`. A short `hold` alias is also installed alongside `holdthedoor` for every command below.
 
 ---
 
@@ -202,15 +215,17 @@ Open a new CLI session — hooks activate automatically.
 
 | Command | What it does |
 |---|---|
-| `holdthedoor status [--cli auto\|claude\|codex\|gemini\|all]` | Installed hooks per CLI, session DB path, last 5 audit events. |
+| `holdthedoor status [--cli auto\|claude\|codex\|gemini\|opencode\|all]` | Installed hooks per CLI, session DB path, last 5 audit events. |
 | `holdthedoor reveal <token>` | Print the original value behind a session token (session-scoped — dies with the session). |
 | `holdthedoor audit [--verify] [--last N] [--json] [--follow]` | Print the audit log. `--verify` walks the HMAC chain. `--follow` (`-f`) tails new events live, for monitoring in a second terminal. |
+| `holdthedoor audit export [--since DATE] [--until DATE] [--out FILE]` | Export the audit log as CSV — see [compliance export](#compliance-export). |
 | `holdthedoor policy list \| add \| remove \| test` | Manage custom rules — see [policy engine](#tool-call-policy-engine). |
+| `holdthedoor monitor [--host] [--port] [--open]` | Serve a live audit-log dashboard on localhost — see [live monitor](#live-monitor). |
 | `holdthedoor uninstall [--cli ...] [--yes]` | Strips only holdthedoor entries. Other hooks are untouched. |
 
 ```
 $ holdthedoor reveal '[WALL:openai_key:1]'
-sk-proj-••••••••••••••••••••••••••••••••••••••
+sk-proj-••••••••••••••••••••••••••••••••••••
 
 $ holdthedoor audit --verify
   ✓ chain intact
@@ -233,6 +248,20 @@ unset HOLDTHEDOOR_DISABLED
 
 ---
 
+## Live monitor
+
+`holdthedoor monitor` serves a zero-dependency, local-only dashboard over the live audit log — useful to keep an eye on a long agent session in a second window without polling `audit --follow`.
+
+```bash
+holdthedoor monitor --open
+```
+
+![holdthedoor monitor dashboard](docs/img/monitor-screenshot.png)
+
+Each row is one audit event: which hook fired, what it decided (`block` / `redact` / `warn` / `policy_block`), and why. The `chain intact` indicator re-verifies the HMAC chain on every load — a `chain BROKEN` banner means the log was tampered with after the fact. Binds to `127.0.0.1` only; nothing leaves the machine.
+
+---
+
 ## Strict mode
 
 By default the `UserPromptSubmit` hook warns but lets the prompt through. To block:
@@ -249,7 +278,40 @@ export HOLDTHEDOOR_STRICT=1
 bash scripts/demo.sh
 ```
 
-Runs in an isolated tmpdir — does not touch your real CLI config.
+Runs in an isolated tmpdir — does not touch your real CLI config. Sample transcript (abridged):
+
+```
+=== 1. PostToolUse redact ===
+{"hookSpecificOutput": {"hookEventName": "PostToolUse",
+  "updatedToolOutput": "OPENAI_API_KEY=[WALL:openai_key:1]\nemail=[WALL:email:1]"}}
+
+=== 2. PreToolUse block .env ===
+{"decision": "block", "reason": "path '.env' blocked: filename '.env' is sensitive"}
+blocked as expected (exit 2)
+
+=== 3. UserPromptSubmit warn ===
+{"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+  "additionalContext": "⚠ holdthedoor: 1 sensitive value(s) detected in your prompt
+  (categories: email). The prompt was sent unchanged, but tokens have been recorded
+  for `holdthedoor reveal`."}}
+
+=== 6. CLI: status ===
+[Claude Code]  ✓ installed
+  hooks: PostToolUse · PreToolUse · UserPromptSubmit
+
+SESSION  1 value redacted this session
+    [WALL:email:1]  (email)  →  holdthedoor reveal '[WALL:email:1]'
+
+RECENT EVENTS
+  12:48:27 [demo] claude  ✗ block    pre-tool   Read  .env  →  filename '.env' is sensitive
+  12:48:27 [demo] claude  ⚠ warn     prompt     —  →  1× email  ([WALL:email:*])
+
+=== 8. CLI: audit --verify ===
+SESSION AUDIT  —  2 events
+────────────────────────────────────────────────────────────────
+  1 blocked · 1 warned · 1 values replaced with [WALL:*] tokens
+  ✓ chain intact
+```
 
 ---
 
@@ -260,29 +322,32 @@ holdthedoor/
 ├── patterns.py    # regex categories + sensitive filename/dir/suffix sets
 ├── session.py     # SQLite WAL per-session store
 ├── tokenizer.py   # value <-> [WALL:cat:N] bidirectional, idempotent
-├── audit.py       # HMAC-chained JSONL log + verify()
+├── audit.py       # HMAC-chained JSONL log + verify() + export_csv()
 ├── workspace.py   # workspace scan + check_path / check_bash (built-in rules)
 ├── policy.py      # user-defined allow/warn/block rules (policy engine)
-├── settings.py    # multi-CLI install / uninstall (Claude/Codex/Gemini adapters)
+├── settings.py    # multi-CLI install / uninstall (Claude/Codex/Gemini/OpenCode adapters)
 ├── cli.py         # argparse entry point
 └── hooks/
     ├── _common.py             # stdin/stdout JSON, session, tool name normalization
-    ├── post_tool_use.py       # AfterTool / PostToolUse
-    ├── pre_tool_use.py        # BeforeTool / PreToolUse
+    ├── post_tool_use.py       # AfterTool / PostToolUse / tool.execute.after
+    ├── pre_tool_use.py        # BeforeTool / PreToolUse / tool.execute.before
     └── user_prompt_submit.py  # UserPromptSubmit (Claude Code + Codex)
 ```
 
+For every JSON-hooks-array CLI (Claude/Codex/Gemini), `install` writes a hook entry that spawns `python -m holdthedoor.hooks.<name> --cli <cli>` per event. OpenCode is the one exception: it loads a JS plugin directly into its own process, so `install --cli opencode` instead generates a thin JS shim (`~/.config/opencode/plugin/holdthedoor.js`) that shells out to the same Python hook modules — no logic duplicated in JS.
+
 ### CLI adapter mapping
 
-| Feature | Claude Code | Codex CLI | Gemini CLI |
-|---|---|---|---|
-| Post-tool event | `PostToolUse` | `PostToolUse` | `AfterTool` |
-| Pre-tool event | `PreToolUse` | `PreToolUse` | `BeforeTool` |
-| Prompt event | `UserPromptSubmit` | `UserPromptSubmit` | *(not available)* |
-| Shell tool name | `Bash` | `Bash` | `run_shell_command` |
-| File read tool | `Read` | `Read` | `read_file` |
-| Web fetch tool | `WebFetch` | `WebFetch` | `fetch_webpage` |
-| Timeout unit | seconds | seconds | milliseconds |
+| Feature | Claude Code | Codex CLI | Gemini CLI | OpenCode |
+|---|---|---|---|---|
+| Post-tool event | `PostToolUse` | `PostToolUse` | `AfterTool` | `tool.execute.after` |
+| Pre-tool event | `PreToolUse` | `PreToolUse` | `BeforeTool` | `tool.execute.before` |
+| Prompt event | `UserPromptSubmit` | `UserPromptSubmit` | *(not available)* | *(not available)* |
+| Shell tool name | `Bash` | `Bash` | `run_shell_command` | `bash` |
+| File read tool | `Read` | `Read` | `read_file` | `read` |
+| Web fetch tool | `WebFetch` | `WebFetch` | `fetch_webpage` | `webfetch` |
+| Install target | JSON hooks array | JSON hooks array + feature flag | JSON hooks array | Generated JS plugin file |
+| Timeout unit | seconds | seconds | milliseconds | n/a (in-process) |
 
 ---
 
@@ -306,11 +371,23 @@ Extend by adding entries to `holdthedoor/patterns.py`. Extend blocking behavior 
 
 ---
 
+## Compliance export
+
+For SOC2-style external audits, export the HMAC-verified audit log as CSV:
+
+```bash
+holdthedoor audit export --since 2026-01-01 --until 2026-03-31 --out q1-audit.csv
+```
+
+The first line is a `#`-prefixed metadata comment (`chain_verified=true/false`, event count, generation timestamp), so an auditor can see at a glance whether the log was tampered with before trusting the rows beneath it.
+
+---
+
 ## Testing
 
 ```bash
 pip install -e '.[dev]'
-pytest -q   # 96 passed
+pytest -q   # 122 passed
 ```
 
 ---
@@ -318,29 +395,29 @@ pytest -q   # 96 passed
 ## Threat model
 
 **Mitigated:**
-1. LLM reads secrets via tool output → PostToolUse/AfterTool redaction
-2. LLM reads `.env` / SSH keys → PreToolUse/BeforeTool block (exit 2)
+1. LLM reads secrets via tool output → PostToolUse/AfterTool/tool.execute.after redaction
+2. LLM reads `.env` / SSH keys → PreToolUse/BeforeTool/tool.execute.before block
 3. LLM runs a command or touches a path your team has flagged → policy engine block/warn
-4. Secrets in prompts → UserPromptSubmit scan
+4. Secrets in prompts → UserPromptSubmit scan (Claude Code + Codex)
 5. Post-hoc log tampering → HMAC-chained audit
 
 **Not mitigated:**
 - Copy-paste propagation (LLM copies secret to another file)
 - Full filesystem isolation (use a container)
 - Novel secret formats not in `patterns.py`
-- Gemini CLI prompts (no `UserPromptSubmit` equivalent)
+- Gemini CLI / OpenCode prompts (no `UserPromptSubmit` equivalent)
 - A user with local write access editing `policy.json` or the hooks themselves — this protects against the *LLM* bypassing controls, not against a malicious local operator
 
 ---
 
-## Roadmap (v0.2)
+## Roadmap
 
+- [x] Compliance/audit export (SOC2-style CSV report from the HMAC log)
+- [x] OpenCode adapter
 - [ ] Ollama contextual rewriting (200 ms timeout, regex fallback)
 - [ ] `Stop` hook with per-session redaction summary
-- [ ] Placeholder-before-execution (secret never enters LLM context)
 - [ ] Homebrew formula + PyPI release
 - [ ] GitHub Actions CI (Python 3.11–3.14, macOS/Linux/Windows)
-- [ ] Compliance/audit export (SOC2-style report from the HMAC log)
 - [ ] Supply-chain vetting for installed skills/MCP servers
 
 ---
